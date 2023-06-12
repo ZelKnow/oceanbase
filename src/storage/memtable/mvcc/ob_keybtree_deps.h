@@ -218,7 +218,7 @@ public:
   }
   OB_INLINE BtreeVal get_val_with_tag(int pos, MultibitSet *index = nullptr) const
   {
-    return ATOMIC_LOAD(&kvs_[get_real_pos(pos, index)].val_);
+    return kvs_[get_real_pos(pos, index)].val_;
   }
   OB_INLINE void set_val(int pos, BtreeVal val, MultibitSet *index = nullptr)
   {
@@ -305,7 +305,7 @@ protected:
 public:
   uint64_t get_tag(int pos, MultibitSet *index = nullptr) const
   {
-    return (uint64_t)ATOMIC_LOAD(&kvs_[get_real_pos(pos, index)].val_) & 1ULL;
+    return (uint64_t)0;
   }
   uint64_t check_tag(MultibitSet *index = nullptr) const;
   void replace_child(BtreeNode *new_node, const int pos, BtreeNode *child, int64_t del_version);

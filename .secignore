@@ -13,8 +13,8 @@
   https://open.oceanbase.com*
   https://www.oceanbase.com*
   https://github.com/oceanbase/oceanbase*
-  http://mirrors.aliyun.com/oceanbase*
-  https://mirrors.aliyun.com/oceanbase*
+  http://mirrors.cloud.aliyuncs.com/oceanbase*
+  https://mirrors.cloud.aliyuncs.com/oceanbase*
   http://ocelot.ca/blog/blog/2016/04/18/mariadb-10-2-window-functions/
   https://apod.nasa.gov/apod/astropix.html
   https://github.com/Cyan4973/*
@@ -187,7 +187,7 @@
   https://docs.docker.com/*
   http://helloworld.com/*
   http://1.1.1.1:8080/*
-  https://mirrors.aliyun.com/*
+  https://mirrors.cloud.aliyuncs.com/*
   https://bixense.com/clicolors/
   martin.gieseking@uos.de
   jloup@gzip.org

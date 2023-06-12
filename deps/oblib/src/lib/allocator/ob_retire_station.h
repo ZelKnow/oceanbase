@@ -38,12 +38,12 @@ public:
   QClock(): clock_(1), qclock_(0) {}
   ~QClock() {}
   uint64_t enter_critical() {
-    uint64_t slot_id = get_slot_id();
+    uint64_t slot_id = get_slot_id(); // thread id
     const uint64_t begin_id = slot_id;
-    while(!locate(slot_id)->set_clock(get_clock())) {
+    while(!locate(slot_id)->set_clock(get_clock())) { // 找一个能用的，置为当前的clock_
       sched_yield();
-      slot_id = (slot_id + 1) % MAX_QCLOCK_SLOT_NUM;
-      if (OB_UNLIKELY(begin_id == slot_id)) {
+      slot_id = (slot_id + 1) % MAX_QCLOCK_SLOT_NUM; // 下一个
+      if (OB_UNLIKELY(begin_id == slot_id)) { // 找了一轮
         if (REACH_TIME_INTERVAL(1 * 1000 * 1000)) {
           COMMON_LOG_RET(ERROR, common::OB_ERR_UNEXPECTED, "QClock slot maybe not enough", K(begin_id), K(MAX_QCLOCK_SLOT_NUM));
         }
@@ -57,15 +57,15 @@ public:
     }
   }
 
-  uint64_t wait_quiescent(uint64_t clock) {
-    uint64_t ret_clock = get_clock();
+  uint64_t wait_quiescent(uint64_t clock){
+    uint64_t ret_clock = get_clock(); // 当前时钟
     while(!is_quiescent(clock)) {
       PAUSE();
     }
     inc_clock();
     return ret_clock;
   }
-
+ 
   bool try_quiescent(uint64_t &clock) {
     uint64_t cur_clock = get_clock();
     bool ret = false;
@@ -77,8 +77,9 @@ public:
     return ret;
   }
 private:
-  bool is_quiescent(uint64_t clock) {
-    uint64_t cur_clock = get_clock();
+  bool is_quiescent(uint64_t clock) { // 意思是可以回收？
+    uint64_t cur_clock = get_clock(); // 当前时钟
+    // 传入时钟较小，且(比qclock小 或 更新qclock后比qclock小)
     return clock < cur_clock && (clock < get_qclock() || clock < update_qclock(calc_quiescent_clock(cur_clock)));
   }
 private:
@@ -96,7 +97,7 @@ private:
     for(int64_t i = 0; i < MAX_QCLOCK_SLOT_NUM; i++){
       uint64_t tclock = locate(i)->load_clock();
       if (tclock < qclock) {
-        qclock = tclock;
+        qclock = tclock; // 最小值
       }
     }
     return qclock;

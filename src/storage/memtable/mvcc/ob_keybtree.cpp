@@ -14,6 +14,8 @@
 #include "lib/allocator/ob_retire_station.h"
 #include "lib/oblog/ob_log_module.h"
 #include "share/ob_errno.h"
+#include "ob_keybtree_deps.h"
+#include "ob_keybtree.h"
 
 namespace oceanbase
 {

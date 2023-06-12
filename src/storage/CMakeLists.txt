@@ -503,6 +503,17 @@ ob_set_subtarget(ob_storage memtable_mvcc
   memtable/mvcc/ob_tx_callback_list.cpp
   memtable/mvcc/ob_query_engine.cpp
   memtable/mvcc/ob_row_data.cpp
+  memtable/mvcc/masstree-beta/kvthread.cc
+  memtable/mvcc/masstree-beta/string.cc
+  memtable/mvcc/masstree-beta/json.cc
+  memtable/mvcc/masstree-beta/kvio.cc
+  memtable/mvcc/masstree-beta/checkpoint.cc
+  memtable/mvcc/masstree-beta/misc.cc
+  memtable/mvcc/masstree-beta/straccum.cc
+  memtable/mvcc/masstree-beta/str.cc
+  memtable/mvcc/masstree-beta/compiler.cc
+  memtable/mvcc/masstree-beta/kvrandom.cc
+  memtable/mvcc/masstree-beta/clp.c
 )
 
 ob_set_subtarget(ob_storage tablelock

@@ -2,7 +2,7 @@ FROM centos:centos7
 
 ARG VERSION
 
-RUN yum-config-manager --add-repo https://mirrors.aliyun.com/oceanbase/OceanBase.repo && \
+RUN yum-config-manager --add-repo https://mirrors.cloud.aliyuncs.com/oceanbase/OceanBase.repo && \
     yum install -y ob-deploy obclient ob-sysbench libaio && \
     rm -rf /usr/obd/mirror/remote/* && \
     rm -rf /u01/mysql /u01/obclient/bin/mysqld* /u01/obclient/bin/aria* /u01/obclient/bin/maria* && \

@@ -15,6 +15,9 @@
 #include "common/ob_store_range.h"
 #include "storage/blocksstable/ob_row_reader.h"
 
+volatile mrcu_epoch_type globalepoch = 1;
+volatile mrcu_epoch_type active_epoch = 1;
+
 namespace oceanbase
 {
 namespace memtable
@@ -28,14 +31,14 @@ ObQueryEngine::TableIndex * const ObQueryEngine::PLACE_HOLDER =
 STATIC_ASSERT(sizeof(ObQueryEngine::Iterator<keybtree::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>>) <= 5120, "Iterator size exceeded");
 STATIC_ASSERT(sizeof(keybtree::Iterator<ObStoreRowkeyWrapper, ObMvccRow *>) == 376, "Iterator size changed");
 
+__thread threadinfo* mtSessionThreadInfo = nullptr;
+
 int ObQueryEngine::TableIndex::init()
 {
   int ret = OB_SUCCESS;
   if (OB_UNLIKELY(is_inited_)) {
     ret = OB_INIT_TWICE;
     TRANS_LOG(WARN, "init twice", K(this));
-  } else if (OB_FAIL(keybtree_.init())) {
-    TRANS_LOG(WARN, "keybtree init fail", KR(ret));
   } else {
     is_inited_ = true;
   }
@@ -48,13 +51,14 @@ int ObQueryEngine::TableIndex::init()
 void ObQueryEngine::TableIndex::destroy()
 {
   is_inited_ = false;
-  keybtree_.destroy();
+  masstree_.destroy(*mtSessionThreadInfo);
 }
 
 void ObQueryEngine::TableIndex::check_cleanout(bool &is_all_cleanout,
                                                bool &is_all_delay_cleanout,
                                                int64_t &count)
 {
+  /*
   int ret = OB_SUCCESS;
   Iterator<keybtree::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>> iter;
   ObStoreRowkeyWrapper scan_start_key_wrapper(&ObStoreRowkey::MIN_STORE_ROWKEY);
@@ -85,12 +89,13 @@ void ObQueryEngine::TableIndex::check_cleanout(bool &is_all_cleanout,
         count++;
       }
     }
-  }
+  }*/
 }
 
 void ObQueryEngine::TableIndex::dump2text(FILE* fd)
 {
-  int ret = OB_SUCCESS;
+  /*
+  int ret = OB_SUCCESS;  
   Iterator<BtreeIterator> iter;
   ObStoreRowkeyWrapper scan_start_key_wrapper(&ObStoreRowkey::MIN_STORE_ROWKEY);
   ObStoreRowkeyWrapper scan_end_key_wrapper(&ObStoreRowkey::MAX_STORE_ROWKEY);
@@ -124,7 +129,7 @@ void ObQueryEngine::TableIndex::dump2text(FILE* fd)
     }
     keybtree_.dump(fd);
     fprintf(fd, "--------------------------\n");
-  }
+  }*/
 }
 
 int ObQueryEngine::TableIndex::dump_keyhash(FILE *fd) const
@@ -147,7 +152,7 @@ int ObQueryEngine::TableIndex::dump_keyhash(FILE *fd) const
 
 int ObQueryEngine::TableIndex::dump_keybtree(FILE* fd)
 {
-  keybtree_.dump(fd);
+  //keybtree_.dump(fd);
   return OB_SUCCESS;
 }
 
@@ -165,8 +170,8 @@ int64_t ObQueryEngine::TableIndex::hash_alloc_memory() const
 
 int64_t ObQueryEngine::TableIndex::btree_size() const
 {
-  int64_t obj_cnt = keybtree_.size();
-  return obj_cnt;
+  //int64_t obj_cnt = keybtree_.size();
+  return 0; //obj_cnt;
 }
 
 int64_t ObQueryEngine::TableIndex::btree_alloc_memory() const
@@ -308,10 +313,13 @@ int ObQueryEngine::ensure(const ObMemtableKey *key, ObMvccRow *value)
       ret = set_table_index(key->get_rowkey()->get_obj_cnt(), node_ptr);
     }
     if (OB_SUCC(ret) && OB_NOT_NULL(node_ptr)) {
+      if (mtSessionThreadInfo == nullptr) {
+        mtSessionThreadInfo = threadinfo::make(threadinfo::TI_PROCESS, -1);
+      }
       if (value->is_btree_indexed()) {
         if (value->is_btree_tag_del()) {
           ObStoreRowkeyWrapper key_wrapper(key->get_rowkey());
-          if (OB_FAIL(node_ptr->get_keybtree().re_insert(key_wrapper, value))) {
+          if (OB_FAIL(node_ptr->get_masstree().insert(key_wrapper, value, mtSessionThreadInfo))) {
             TRANS_LOG(WARN, "ensure keybtree fail", KR(ret), K(*key));
           } else {
             value->clear_btree_tag_del();
@@ -319,7 +327,7 @@ int ObQueryEngine::ensure(const ObMemtableKey *key, ObMvccRow *value)
         }
       } else {
         ObStoreRowkeyWrapper key_wrapper(key->get_rowkey());
-        if (OB_FAIL(node_ptr->get_keybtree().insert(key_wrapper, value))) {
+        if (OB_FAIL(node_ptr->get_masstree().insert(key_wrapper, value, mtSessionThreadInfo))) {
           TRANS_LOG(WARN, "ensure keybtree fail", KR(ret), K(*key));
         } else {
           value->set_btree_indexed();
@@ -364,10 +372,6 @@ int ObQueryEngine::purge(const ObMemtableKey *key, int64_t version)
     ret = OB_NOT_INIT;
   } else if (OB_FAIL(get_table_index(node_ptr))) {
     // do nothing
-  } else if (OB_FAIL(node_ptr->get_keybtree().del(key_wrapper, value, version))) {
-    if (OB_UNLIKELY(OB_ENTRY_NOT_EXIST != ret)) {
-      TRANS_LOG(WARN, "purge from keybtree fail", KR(ret), K(*key));
-    }
   } else {
     value->set_btree_tag_del();
   }
@@ -379,7 +383,7 @@ int ObQueryEngine::scan(const ObMemtableKey *start_key, const bool start_exclude
                         const bool end_exclude, const int64_t version, ObIQueryEngineIterator *&ret_iter)
 {
   int ret = OB_SUCCESS;
-  Iterator<BtreeIterator> *iter = nullptr;
+  Iterator<masstree::MasstreeIterator> *iter = nullptr;
   TableIndex *node_ptr = nullptr;
   if (IS_NOT_INIT) {
     TRANS_LOG(WARN, "not init", "this", this);
@@ -395,9 +399,10 @@ int ObQueryEngine::scan(const ObMemtableKey *start_key, const bool start_exclude
     ObStoreRowkeyWrapper scan_end_key_wrapper(end_key->get_rowkey());
     iter->reset();
     const_cast<ObMemtableKey *>(iter->get_key())->encode(nullptr);
-    if (OB_FAIL(node_ptr->get_keybtree().set_key_range(iter->get_read_handle(),
-                                                       scan_start_key_wrapper, start_exclude,
-                                                       scan_end_key_wrapper, end_exclude, version))) {
+    if (mtSessionThreadInfo == nullptr) {
+      mtSessionThreadInfo = threadinfo::make(threadinfo::TI_PROCESS, -1);
+    }
+    if (OB_FAIL(iter->get_read_handle().set_key_range(scan_start_key_wrapper, start_exclude, scan_end_key_wrapper, end_exclude, version, node_ptr->get_masstree(), mtSessionThreadInfo))) {
       ret = OB_ERR_UNEXPECTED;
       TRANS_LOG(ERROR, "set key range to btree scan handle fail", KR(ret));
     }
@@ -419,7 +424,7 @@ int ObQueryEngine::scan(const ObMemtableKey *start_key, const bool start_exclude
 
 void ObQueryEngine::revert_iter(ObIQueryEngineIterator *iter)
 {
-  iter_alloc_.free((Iterator<BtreeIterator> *)iter);
+  iter_alloc_.free((Iterator<masstree::MasstreeIterator> *)iter);
   iter = NULL;
 }
 
@@ -428,6 +433,8 @@ int ObQueryEngine::sample_rows(Iterator<BtreeRawIterator> *iter, const ObMemtabl
                                const transaction::ObTransID &tx_id,
                                int64_t &logical_row_count, int64_t &physical_row_count, double &ratio)
 {
+  return OB_SUCCESS;
+#if 0 
   int ret = OB_SUCCESS;
   ObMvccRow *value = nullptr;
   int64_t sample_row_count = 0;
@@ -510,6 +517,7 @@ int ObQueryEngine::sample_rows(Iterator<BtreeRawIterator> *iter, const ObMemtabl
   TRANS_LOG(DEBUG, "memtable after sample", KR(ret), K(sample_row_count), K(logical_row_count),
       K(physical_row_count), K(gap_size), K(ratio));
   return ret;
+#endif
 }
 
 int ObQueryEngine::init_raw_iter_for_estimate(Iterator<BtreeRawIterator>*& iter,
@@ -517,6 +525,8 @@ int ObQueryEngine::init_raw_iter_for_estimate(Iterator<BtreeRawIterator>*& iter,
                                               const ObMemtableKey *end_key)
 {
   int ret = OB_SUCCESS;
+  return ret;
+#if 0
   TableIndex *node_ptr = nullptr;
   if (IS_NOT_INIT) {
     TRANS_LOG(WARN, "not init", "this", this);
@@ -539,6 +549,7 @@ int ObQueryEngine::init_raw_iter_for_estimate(Iterator<BtreeRawIterator>*& iter,
     }
   }
   return ret;
+#endif
 }
 
 int ObQueryEngine::estimate_size(const ObMemtableKey *start_key,
@@ -549,6 +560,7 @@ int ObQueryEngine::estimate_size(const ObMemtableKey *start_key,
                   int64_t& total_rows)
 {
   int ret = OB_SUCCESS;
+#if 0
   Iterator<BtreeRawIterator> *iter = nullptr;
   branch_count = 0;
   for(level = 0; branch_count < ESTIMATE_CHILD_COUNT_THRESHOLD && OB_SUCC(ret); ) {
@@ -576,6 +588,7 @@ int ObQueryEngine::estimate_size(const ObMemtableKey *start_key,
     total_bytes = 0;
     total_rows = 0;
   }
+#endif
   return ret;
 }
 
@@ -666,6 +679,7 @@ int ObQueryEngine::estimate_row_count(const transaction::ObTransID &tx_id,
                                       int64_t &logical_row_count, int64_t &physical_row_count)
 {
   int ret = OB_SUCCESS;
+#if 0
   Iterator<BtreeRawIterator> *iter = nullptr;
   int64_t remaining_row_count = 0;
   int64_t element_count = 0;
@@ -726,6 +740,7 @@ int ObQueryEngine::estimate_row_count(const transaction::ObTransID &tx_id,
     iter = NULL;
   }
   ret = OB_ITER_END == ret ? OB_SUCCESS : ret;
+#endif
   return ret;
 }
 

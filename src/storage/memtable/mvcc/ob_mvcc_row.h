@@ -352,7 +352,7 @@ struct ObMvccRow
   // need_compact checks whether the compaction is necessary
   bool need_compact(const bool for_read, const bool for_replay);
   // is_empty checks whether ObMvccRow has no tx node(while the row may be deleted)
-  bool is_empty() const { return (NULL == ATOMIC_LOAD(&list_head_)); }
+  bool is_empty() const { return (NULL == list_head_); }
   // get_list_head gets the head tx node
   ObMvccTransNode *get_list_head() const { return ATOMIC_LOAD(&list_head_); }
   // is_valid_replay_queue_index returns whether the index is a valid replay queue

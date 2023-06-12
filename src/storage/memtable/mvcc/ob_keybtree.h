@@ -106,7 +106,7 @@ private:
 
 template<typename BtreeKey, typename BtreeVal>
 class BtreeIterator {
-private:
+public:
   typedef BtreeKV<BtreeKey, BtreeVal> BtreeKV;
   typedef Iterator<BtreeKey, BtreeVal> Iterator;
   typedef ObKeyBtree<BtreeKey, BtreeVal> ObKeyBtree;

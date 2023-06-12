@@ -20,6 +20,7 @@
 #include "storage/memtable/mvcc/ob_mvcc_row.h"
 #include "storage/memtable/ob_memtable_key.h"
 #include "storage/memtable/ob_mt_hash.h"
+#include "storage/memtable/mvcc/masstree-beta/masstree_api.h"
 
 namespace oceanbase
 {
@@ -95,7 +96,7 @@ public:
         if (OB_ISNULL(value_)) {
           ret = common::OB_ITER_END;
         } else {
-          if (skip_purge_memtable || value_->is_partial(version_)) {
+          if (skip_purge_memtable) {
             iter_flag_ |= STORE_ITER_ROW_PARTIAL;
           }
         }
@@ -146,7 +147,7 @@ public:
                             common::ObIAllocator &memstore_allocator,
                             int64_t obj_cnt)
       : is_inited_(false),
-        keybtree_(btree_allocator),
+        masstree_(),
         keyhash_(memstore_allocator),
         obj_cnt_(obj_cnt)
     {}
@@ -163,13 +164,15 @@ public:
     int64_t hash_alloc_memory() const;
     int64_t btree_size() const;
     int64_t btree_alloc_memory() const;
-    KeyBtree &get_keybtree() { return keybtree_; }
+    //KeyBtree &get_keybtree() { return keybtree_; }
     KeyHash &get_keyhash() { return keyhash_; }
+    masstree::MassTreeIndex &get_masstree() { return masstree_; }
     int64_t get_obj_cnt() { return obj_cnt_; }
   private:
     DISALLOW_COPY_AND_ASSIGN(TableIndex);
     bool is_inited_;
-    KeyBtree keybtree_;
+    //KeyBtree keybtree_;
+    masstree::MassTreeIndex masstree_;
     KeyHash keyhash_;
     int64_t obj_cnt_;
   };
@@ -262,7 +265,7 @@ private:
   TableIndex *index_;
   ObIAllocator &memstore_allocator_;
   BtreeNodeAllocator btree_allocator_;
-  IteratorAlloc<BtreeIterator> iter_alloc_;
+  IteratorAlloc<masstree::MasstreeIterator> iter_alloc_;
   IteratorAlloc<BtreeRawIterator> raw_iter_alloc_;
 };
 

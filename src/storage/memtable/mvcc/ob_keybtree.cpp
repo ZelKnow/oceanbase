@@ -630,6 +630,7 @@ int WriteHandle<BtreeKey, BtreeVal>::insert_and_split_upward(BtreeKey key, Btree
       new_node_1->insert_into_node(0, key, val);
     }
   } else if (this->path_.get_is_found()) {
+    return OB_SUCCESS; // shouluo
     ret = OB_ENTRY_EXIST;
     BtreeVal old_val = val;
     val = old_node->get_val(pos, index);
@@ -1277,6 +1278,7 @@ int BtreeIterator<BtreeKey, BtreeVal>::set_key_range(const BtreeKey min_key, con
   start_exclude_ = start_exclude;
   end_exclude_ = end_exclude;
   version_ = version;
+  range_ = 1000;
   is_iter_end_ = false;
   return ret;
 }
@@ -1298,6 +1300,10 @@ int BtreeIterator<BtreeKey, BtreeVal>::get_next(BtreeKey &key, BtreeVal &value)
   if (OB_SUCCESS == ret) {
     key = item.key_;
     value = item.val_;
+    range_--;
+    if (range_ <= 0) {
+      ret = OB_ITER_END;
+    }
   } else if (OB_UNLIKELY(OB_ITER_END != ret)) {
     TRANS_LOG(ERROR, "get_next failed", KR(ret));
     ret = OB_ERR_UNEXPECTED;

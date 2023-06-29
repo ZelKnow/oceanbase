@@ -93,13 +93,14 @@ public:
         key_.encode(key_wrapper.get_rowkey());
         BTREE_ASSERT(((uint64_t)value_ & 7ULL) == 0);
         iter_flag_ = 0;
+        /*
         if (OB_ISNULL(value_)) {
           ret = common::OB_ITER_END;
         } else {
           if (skip_purge_memtable) {
             iter_flag_ |= STORE_ITER_ROW_PARTIAL;
           }
-        }
+        }*/
       }
       if (common::OB_ITER_END == ret) {
         btree_iter_.reset();

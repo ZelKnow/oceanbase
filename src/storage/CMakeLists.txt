@@ -514,6 +514,11 @@ ob_set_subtarget(ob_storage memtable_mvcc
   memtable/mvcc/masstree-beta/compiler.cc
   memtable/mvcc/masstree-beta/kvrandom.cc
   memtable/mvcc/masstree-beta/clp.c
+  memtable/mvcc/ARTSynchronized/OptimisticLockCoupling/Tree.cpp
+  memtable/mvcc/ARTSynchronized/ROWEX/Tree.cpp
+  memtable/mvcc/ARTSynchronized/Epoche.cpp
+  #memtable/mvcc/ARTOLC/Epoche.cpp
+  #memtable/mvcc/ARTOLC/Tree.cpp
 )
 
 ob_set_subtarget(ob_storage tablelock
@@ -622,7 +627,9 @@ add_library(ob_storage_static
   EXCLUDE_FROM_ALL)
 
 target_link_libraries(ob_storage_static
-  PUBLIC ob_storage)
+  PUBLIC ob_storage
+  ${DEP_DIR}/lib64/libtbb.so
+  libatomic.so.1)
 
 ob_set_subtarget(ob_storage_simd common
   blocksstable/encoding/ob_raw_decoder_simd.cpp

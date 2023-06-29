@@ -43,4 +43,4 @@ sed "/Setup the input buffer state to scan the given bytes/,/}/{s/\tbuf\[i\] = y
 
 
 # generate type name
-./gen_type_name.sh ../../../src/objit/include/objit/common/ob_item_type.h > type_name.c
+sudo bash ./gen_type_name.sh ../../../src/objit/include/objit/common/ob_item_type.h > type_name.c

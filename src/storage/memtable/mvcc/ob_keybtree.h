@@ -112,7 +112,7 @@ public:
   typedef ObKeyBtree<BtreeKey, BtreeVal> ObKeyBtree;
   class KVQueue {
     enum {
-      capacity = 225
+      capacity = 500,
     };
     public:
       KVQueue(): push_(0), pop_(0) {}
@@ -147,6 +147,7 @@ public:
   int get_next(BtreeKey &key, BtreeVal &val);
   bool is_reverse_scan() const { return scan_backward_; }
   bool is_iter_end() const { return is_iter_end_; }
+  int get_range() const { return range_; }
 private:
   int scan_batch();
 private:
@@ -157,6 +158,7 @@ private:
   bool start_exclude_; // 1byte
   bool end_exclude_; // 1byte
   bool is_iter_end_; // 1byte
+  int range_;
   bool scan_backward_; // 1byte
   KVQueue kv_queue_; // 16 + sizeof(BtreeKV) * n, n == 225, 3616 when sizeof(BtreeKV) is 16
   char buf_[sizeof(Iterator)]; // 376 when sizeof(BtreeKV) is 16

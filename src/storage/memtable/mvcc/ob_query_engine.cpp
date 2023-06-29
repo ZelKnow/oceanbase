@@ -28,7 +28,7 @@ ObQueryEngine::TableIndex * const ObQueryEngine::PLACE_HOLDER =
   (ObQueryEngine::TableIndex *)0x1;
 
 // modify buf size in ob_keybtree.h together, otherwise there may be memory waste or overflow.
-STATIC_ASSERT(sizeof(ObQueryEngine::Iterator<keybtree::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>>) <= 5120, "Iterator size exceeded");
+STATIC_ASSERT(sizeof(ObQueryEngine::Iterator<keybtree::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>>) <= 10000, "Iterator size exceeded");
 STATIC_ASSERT(sizeof(keybtree::Iterator<ObStoreRowkeyWrapper, ObMvccRow *>) == 376, "Iterator size changed");
 
 __thread threadinfo* mtSessionThreadInfo = nullptr;

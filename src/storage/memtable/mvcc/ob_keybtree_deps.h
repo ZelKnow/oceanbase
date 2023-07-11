@@ -182,7 +182,7 @@ private:
     MAGIC_NUM = 0xb7ee //47086
   };
 public:
-  BtreeNode(): host_(nullptr), max_del_version_(0), level_(0), magic_num_(MAGIC_NUM), lock_(), index_() {}
+  BtreeNode(): host_(nullptr)/*, max_del_version_(0)*/, level_(0), magic_num_(MAGIC_NUM), lock_(), index_() {}
   ~BtreeNode() {}
   void reset();
   OB_INLINE void *get_host() { return host_; }
@@ -229,11 +229,12 @@ public:
     return BtreeVal((uint64_t)get_val_with_tag(pos, index) & (~1ULL));
   }
   OB_INLINE BtreeVal get_val_with_tag(int pos, int64_t version, MultibitSet *index = nullptr) const {
-    return version >= max_del_version_? get_val_with_tag(pos, index): get_val(pos, index);
+    return get_val_with_tag(pos, index);
+    //return version >= max_del_version_? get_val_with_tag(pos, index): get_val(pos, index);
   }
   int make_new_root(BtreeKey key1, BtreeNode *node_1, BtreeKey key2, BtreeNode *node_2, int16_t level, int64_t version);
-  OB_INLINE int64_t get_max_del_version() const { return max_del_version_; }
-  OB_INLINE void set_max_del_version(int64_t version) { ATOMIC_STORE(&max_del_version_, version); }
+  // OB_INLINE int64_t get_max_del_version() const { return max_del_version_; }
+  // OB_INLINE void set_max_del_version(int64_t version) { ATOMIC_STORE(&max_del_version_, version); }
   bool is_overflow(const int64_t delta, MultibitSet *index = nullptr) { return size(index) + delta > NODE_KEY_COUNT; }
   void print(FILE *file, const int depth) const;
   OB_INLINE int find_pos(CompHelper &nh, BtreeKey key, bool &is_equal, int &pos, MultibitSet *index = nullptr)
@@ -305,7 +306,7 @@ protected:
 public:
   uint64_t get_tag(int pos, MultibitSet *index = nullptr) const
   {
-    return (uint64_t)ATOMIC_LOAD(&kvs_[get_real_pos(pos, index)].val_) & 1ULL;
+    return 0; /*(uint64_t)ATOMIC_LOAD(&kvs_[get_real_pos(pos, index)].val_) & 1ULL*/;
   }
   uint64_t check_tag(MultibitSet *index = nullptr) const;
   void replace_child(BtreeNode *new_node, const int pos, BtreeNode *child, int64_t del_version);
@@ -316,7 +317,7 @@ public:
                                          BtreeKey key_1, BtreeVal val_1, BtreeKey key_2, BtreeVal val_2, int64_t del_version);
 private:
   void *host_;  // 8byte
-  int64_t max_del_version_; // 8byte
+  // int64_t max_del_version_; // 8byte
   int16_t level_; // 2byte
   uint16_t magic_num_; // 2byte
   RWLock lock_; // 4byte
@@ -427,11 +428,13 @@ private:
   typedef Path<BtreeKey, BtreeVal> Path;
   typedef BtreeNode<BtreeKey, BtreeVal> BtreeNode;
   typedef ObKeyBtree<BtreeKey, BtreeVal> ObKeyBtree;
+  typedef struct { char x[64]; } cacheline_t;
 private:
   Path path_;
   int64_t version_;
+  bool prefetch_;
 public:
-  explicit ScanHandle(ObKeyBtree &tree): BaseHandle(tree.get_qclock()), version_(INT64_MAX) { UNUSED(tree); }
+  explicit ScanHandle(ObKeyBtree &tree): BaseHandle(tree.get_qclock()), version_(INT64_MAX), prefetch_(tree.get_prefetch()) { UNUSED(tree); }
   ~ScanHandle() {}
   void reset()
   {
@@ -461,13 +464,15 @@ private:
   typedef Path<BtreeKey, BtreeVal> Path;
   typedef BtreeNode<BtreeKey, BtreeVal> BtreeNode;
   typedef ObKeyBtree<BtreeKey, BtreeVal> ObKeyBtree;
+  typedef struct { char x[64]; } cacheline_t;
 private:
   ObKeyBtree &base_;
   Path path_;
   HazardList retire_list_;
   HazardList alloc_list_;
+  bool prefetch_;
 public:
-  explicit WriteHandle(ObKeyBtree &tree): BaseHandle(tree.get_qclock()), base_(tree) {}
+  explicit WriteHandle(ObKeyBtree &tree): BaseHandle(tree.get_qclock()), base_(tree), prefetch_(tree.get_prefetch()) {}
   ~WriteHandle() {}
   OB_INLINE bool &get_is_in_delete()
   {
@@ -497,6 +502,11 @@ public:
     }
     ret = OB_SUCCESS;
     while (OB_NOT_NULL(root) && OB_SUCCESS == ret) {
+      if (prefetch_) {
+        for(int i=1;i<4;i++) {
+          asm volatile("prefetcht0 %0" : : "m" (*(const cacheline_t *)((char *)root+i*64)));
+        }
+      }
       if (!may_exist) {
         pos = -1;
       } else if (is_found) {

@@ -95,7 +95,7 @@ public:
         if (OB_ISNULL(value_)) {
           ret = common::OB_ITER_END;
         } else {
-          if (skip_purge_memtable || value_->is_partial(version_)) {
+          if (skip_purge_memtable /*|| value_->is_partial(version_)*/) {
             iter_flag_ |= STORE_ITER_ROW_PARTIAL;
           }
         }

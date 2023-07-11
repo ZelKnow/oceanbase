@@ -226,6 +226,12 @@ public:
   int set_key_range(BtreeRawIterator &handle, const BtreeKey min_key, const bool start_exclude,
                     const BtreeKey max_key, bool end_exclude, int64_t version);
   BtreeNode *alloc_node(const bool is_emergency);
+  void set_prefetch(bool prefetch) {
+    prefetch_ = prefetch;
+  }
+  bool get_prefetch() {
+    return prefetch_;
+  }
   void free_node(BtreeNode *p);
   void retire(common::HazardList &retire_list);
   int32_t update_split_info(int32_t split_pos);
@@ -245,6 +251,7 @@ private:
   common::ObSimpleCounter size_;
   BtreeNodeAllocator &node_allocator_;
   BtreeNode *root_;
+  bool prefetch_;
   DISALLOW_COPY_AND_ASSIGN(ObKeyBtree);
 };
 

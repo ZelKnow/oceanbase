@@ -14,6 +14,7 @@
 #include "lib/allocator/ob_retire_station.h"
 #include "lib/oblog/ob_log_module.h"
 #include "share/ob_errno.h"
+#include "storage/memtable/mvcc/ob_keybtree.h"
 
 namespace oceanbase
 {
@@ -28,7 +29,7 @@ void BtreeNode<BtreeKey, BtreeVal>::reset()
   magic_num_ = MAGIC_NUM;
   level_ = 0;
   new(&lock_) RWLock();
-  max_del_version_ = 0;
+  //max_del_version_ = 0;
   host_ = nullptr;
   ObLink::reset();
 }
@@ -41,7 +42,7 @@ int BtreeNode<BtreeKey, BtreeVal>::make_new_root(BtreeKey key1, BtreeNode *node_
     ret = OB_INVALID_ARGUMENT;
   } else {
     level_ = level;
-    max_del_version_ = version;
+    //max_del_version_ = version;
     set_key_value(0, key1, (BtreeVal)node_1);
     set_key_value(1, key2, (BtreeVal)node_2);
     if (is_leaf()) {
@@ -63,7 +64,7 @@ void BtreeNode<BtreeKey, BtreeVal>::print(FILE *file, const int depth) const
     MultibitSet index;
     index.load(index_);
     int count = index.size();
-    fprintf(file, " index=%lx %dV:%ld ", index.get(), count, max_del_version_);
+    //fprintf(file, " index=%lx %dV:%ld ", index.get(), count, max_del_version_);
     for (int i = 0; i < count; i++) {
       fprintf(file, " %lx->%lx", (uint64_t)kvs_[i].key_.get_ptr(), (uint64_t)kvs_[i].val_);
     }
@@ -72,7 +73,7 @@ void BtreeNode<BtreeKey, BtreeVal>::print(FILE *file, const int depth) const
     }
   } else {
     int count = size();
-    fprintf(file, " index=%lx %dC:%ld", index_.get(), count, max_del_version_);
+    //fprintf(file, " index=%lx %dC:%ld", index_.get(), count, max_del_version_);
     for (int i = 0; i < count; i++) {
       fprintf(file, " %lx->%lx", (uint64_t)kvs_[i].key_.get_ptr(), (uint64_t)kvs_[i].val_);
     }
@@ -87,7 +88,7 @@ void BtreeNode<BtreeKey, BtreeVal>::print(FILE *file, const int depth) const
 template<typename BtreeKey, typename BtreeVal>
 int BtreeNode<BtreeKey, BtreeVal>::get_next_active_child(int pos, int64_t version, int64_t* cnt, MultibitSet *index)
 {
-  if (version < max_del_version_) {
+  if (version < 0/*max_del_version_*/) {
     ++pos;
   } else {
     while(++pos < size(index)) {
@@ -105,7 +106,7 @@ int BtreeNode<BtreeKey, BtreeVal>::get_next_active_child(int pos, int64_t versio
 template<typename BtreeKey, typename BtreeVal>
 int BtreeNode<BtreeKey, BtreeVal>::get_prev_active_child(int pos, int64_t version, int64_t* cnt, MultibitSet *index)
 {
-  if (version < max_del_version_) {
+  if (version < 0 /*max_del_version_*/) {
     --pos;
   } else {
     while(--pos >= 0) {
@@ -170,7 +171,7 @@ template<typename BtreeKey, typename BtreeVal>
 void BtreeNode<BtreeKey, BtreeVal>::replace_child(BtreeNode *new_node, const int pos, BtreeNode *child, int64_t del_version)
 {
   new_node->level_ = level_;
-  new_node->max_del_version_ = std::max(max_del_version_, del_version);
+  //new_node->max_del_version_ = std::max(max_del_version_, del_version);
   copy(*new_node, 0, 0, size());
   new_node->set_val(pos, (BtreeVal)child);
 }
@@ -179,7 +180,7 @@ template<typename BtreeKey, typename BtreeVal>
 void BtreeNode<BtreeKey, BtreeVal>::replace_child_and_key(BtreeNode *new_node, const int pos, BtreeKey key, BtreeNode *child, int64_t del_version)
 {
   new_node->level_ = level_;
-  new_node->max_del_version_ = std::max(max_del_version_, del_version);
+  //new_node->max_del_version_ = std::max(max_del_version_, del_version);
   copy(*new_node, 0, 0, size());
   new_node->insert_into_node(pos, key, (BtreeVal)child);
 }
@@ -189,7 +190,7 @@ void BtreeNode<BtreeKey, BtreeVal>::split_child_no_overflow(BtreeNode *new_node,
                                         BtreeKey key_2, BtreeVal val_2, int64_t del_version)
 {
   new_node->level_ = level_;
-  new_node->max_del_version_ = std::max(max_del_version_, del_version);
+  //new_node->max_del_version_ = std::max(max_del_version_, del_version);
   copy_and_insert(*new_node, 0, size(), pos, key_1, val_1, key_2, val_2);
 }
 
@@ -204,8 +205,8 @@ void BtreeNode<BtreeKey, BtreeVal>::split_child_cause_recursive_split(BtreeNode 
                              NODE_KEY_COUNT / 2;
   new_node_1->level_ = level_;
   new_node_2->level_ = level_;
-  new_node_1->max_del_version_ = std::max(max_del_version_, del_version);
-  new_node_2->max_del_version_ = std::max(max_del_version_, del_version);
+  //new_node_1->max_del_version_ = std::max(max_del_version_, del_version);
+  //new_node_2->max_del_version_ = std::max(max_del_version_, del_version);
   if (pos < half_limit) {
     copy_and_insert(*new_node_1, 0, half_limit, pos, key_1, val_1, key_2, val_2);
     copy(*new_node_2, 0, half_limit, size());
@@ -337,6 +338,7 @@ int ScanHandle<BtreeKey, BtreeVal>::get(BtreeKey &key, BtreeVal &val, bool is_ba
   if (OB_FAIL(path_.top(leaf, pos))) {
     ret = OB_ITER_END;
   } else {
+    
     MultibitSet *index = &this->index_;
     key = leaf->get_key(pos, index);
     val = leaf->get_val_with_tag(pos, version_, index);
@@ -430,6 +432,11 @@ int ScanHandle<BtreeKey, BtreeVal>::find_path(BtreeNode *root, BtreeKey key, int
   index->reset();
   version_ = version;
   while (OB_NOT_NULL(root) && OB_SUCCESS == ret) {
+    if (prefetch_) {
+      for(int i=1;i<4;i++) {
+        asm volatile("prefetcht0 %0" : : "m" (*(const cacheline_t *)((char *)root+i*64)));
+      }
+    }
     if (!may_exist || is_found) {
       pos = 0;
     } else if (OB_FAIL(root->find_pos(this->get_comp(), key, is_found, pos, index))) {
@@ -473,6 +480,11 @@ int ScanHandle<BtreeKey, BtreeVal>::scan_forward(const int64_t level) {
         break;
       } else {
         BtreeNode* child = (BtreeNode*)node->get_val(pos);
+        if (prefetch_) {
+          for(int i=1;i<4;i++) {
+            asm volatile("prefetcht0 %0" : : "m" (*(const cacheline_t *)((char *)child+i*64)));
+          }
+        }
         if (child->is_leaf()) {
           index->load(child->get_index());
         }
@@ -531,6 +543,11 @@ int ScanHandle<BtreeKey, BtreeVal>::scan_forward(bool skip_inactive, int64_t* sk
         break;
       } else {
         BtreeNode* child = (BtreeNode*)node->get_val(pos);
+        if (prefetch_) {
+          for(int i=1;i<4;i++) {
+            asm volatile("prefetcht0 %0" : : "m" (*(const cacheline_t *)((char *)child+i*64)));
+          }
+        }
         if (child->is_leaf()) {
           index->load(child->get_index());
         }
@@ -655,8 +672,8 @@ int WriteHandle<BtreeKey, BtreeVal>::insert_and_split_upward(BtreeKey key, Btree
         }
       }
     } else {
-      uint64_t v1 = tag1? new_node_1->get_max_del_version(): 0;
-      uint64_t v2 = tag2? new_node_2->get_max_del_version(): 0;
+      uint64_t v1 = /*tag1? new_node_1->get_max_del_version():*/ 0;
+      uint64_t v2 = /*tag2? new_node_2->get_max_del_version():*/ 0;
       if (OB_SUCCESS != this->path_.pop(old_node, pos)) {
         ret = this->make_new_root(new_root, new_node_1->get_key(0, index), add_tag(new_node_1, tag1), new_node_2->get_key(0), add_tag(new_node_2, tag2), (int16_t)(new_node_1->get_level() + 1), std::max(v1, v2));
         new_node_1 = nullptr;
@@ -797,7 +814,7 @@ int WriteHandle<BtreeKey, BtreeVal>::tag_upward(BtreeNode* new_node, BtreeNode*&
         ret = replace_child(old_node, pos, (BtreeVal)add_tag(new_node, tag));
         new_node = nullptr;
       } else {
-        ret = replace_child_by_copy(old_node, pos, (BtreeVal)add_tag(new_node, tag), new_node->get_max_del_version(), new_node);
+        ret = replace_child_by_copy(old_node, pos, (BtreeVal)add_tag(new_node, tag), 0 /*new_node->get_max_del_version()*/, new_node);
       }
     }
   }
@@ -826,7 +843,7 @@ int WriteHandle<BtreeKey, BtreeVal>::tag_leaf(BtreeNode *old_node, const int pos
         && tmp_node->get_tag(tmp_pos) == (old_tag & tag)) {
       old_node->set_spin();
       // if no need to tag_upward, then unlocked.
-      old_node->set_max_del_version(std::max(old_node->get_max_del_version(), version));
+      // old_node->set_max_del_version(std::max(old_node->get_max_del_version(), version));
       // Update max_del_version firstly to keep not reading extra tag.
       old_node->set_val(pos, (BtreeVal)add_tag((BtreeNode*)old_node->get_val(pos), tag));
       // When it's fast unlocking, DO NOT retire.

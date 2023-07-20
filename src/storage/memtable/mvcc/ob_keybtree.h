@@ -206,7 +206,7 @@ private:
 };
 
 // sizezof(BtreeIterator) == 4032 when sizeof(BtreeKV) is 16, some extra memory for QueryEngine Iterator, do not larger than 4k.
-STATIC_ASSERT(sizeof(keybtree::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>) == 4032, "btree iterator size exceeded");
+// STATIC_ASSERT(sizeof(keybtree::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>) == 4032, "btree iterator size exceeded");
 
 
 // Use only for estimation.

@@ -896,6 +896,7 @@ int Iterator<BtreeKey, BtreeVal>::estimate_element_count(int64_t &physical_row_c
   int64_t level_physical_row_count = 0;
   physical_row_count = 0;
   element_count = 0;
+  int limit = 256;
   if (OB_FAIL(estimate_one_level(0, 1, 1024, MAX_SAMPLE_LEAF_COUNT, limit, ratio,
         level_physical_row_count, level_element_count, node_count))) {
     if (OB_ITER_END != ret) {
@@ -1269,6 +1270,7 @@ int BtreeRawIterator<BtreeKey, BtreeVal>::set_key_range(const BtreeKey min_key,
                                                         const bool end_exclude)
 {
   return iter_->set_key_range(min_key, start_exclude, max_key, end_exclude);
+}
 
 template<typename BtreeKey, typename BtreeVal>
 int BtreeRawIterator<BtreeKey, BtreeVal>::get_next(BtreeKey &key, BtreeVal &val)

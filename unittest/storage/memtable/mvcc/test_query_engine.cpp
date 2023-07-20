@@ -30,44 +30,6 @@ using namespace oceanbase::keybtree;
 using namespace oceanbase::memtable;
 using ObQueryEngineIterator = ObQueryEngine::Iterator<BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>>;
 
-TEST(TestObQueryEngine, get_and_set_table_index_node)
-{
-  // This is a concurrency scene, use multi-thread test.
-  constexpr uint64_t TABLE_COUNT_LIMIT = (1 << 14);
-  constexpr int64_t THREAD_COUNT = 20;
-  ObModAllocator allocator;
-  ObQueryEngine qe(allocator);
-  ObQueryEngine::TableIndex *table_index = nullptr;
-  uint64_t counter = 0;
-  int ret = OB_SUCCESS;
-
-  ret = qe.init(1);
-  EXPECT_EQ(OB_SUCCESS, ret);
-
-  std::thread threads[THREAD_COUNT];
-  for (int64_t i = 0; i < THREAD_COUNT; ++i) {
-    threads[i] = std::thread([&]() {
-      int ret = OB_SUCCESS;
-      ObQueryEngine::TableIndex *tmp_ptr = nullptr;
-      if (OB_FAIL(qe.set_table_index(i, tmp_ptr))) {
-        TRANS_LOG(WARN, "", KR(ret));
-      } else {
-        ATOMIC_AAF(&counter, 1);
-        ObQueryEngine::TableIndex *cmp_ptr = nullptr;
-        EXPECT_NE(nullptr, tmp_ptr);
-        EXPECT_EQ(OB_SUCCESS, qe.get_table_index(cmp_ptr));
-        EXPECT_EQ(tmp_ptr, cmp_ptr);
-      }
-    });
-  }
-
-  for (int64_t i = 0; i < THREAD_COUNT; ++i) {
-    threads[i].join();
-  }
-
-  EXPECT_EQ(counter, THREAD_COUNT);
-}
-
 TEST(TestObQueryEngine, smoke_test)
 {
   static const int64_t R_COUNT = 6;
@@ -99,32 +61,31 @@ TEST(TestObQueryEngine, smoke_test)
   };
   auto test_scan = [&](int64_t start, bool include_start, int64_t end, bool include_end) {
     ObIQueryEngineIterator *iter = nullptr;
-    ret = qe.scan(mtk[start], !include_start, mtk[end], !include_end, 1, iter);
-    bool skip_purge_memtable = false;
+    ret = qe.scan(mtk[start], !include_start, mtk[end], !include_end, iter);
     EXPECT_EQ(OB_SUCCESS, ret);
     if (start <= end) {
       for (int64_t i = (include_start ? start : (start + 1)); i <= (include_end ? end : (end - 1)); i++) {
-        ret = iter->next(skip_purge_memtable);
+        ret = iter->next();
         EXPECT_EQ(OB_SUCCESS, ret);
         assert(0 == mtk[i]->compare(*iter->get_key()));
         EXPECT_EQ(&mtv[i], iter->get_value());
       }
     } else {
       for (int64_t i = (include_start ? start : (start - 1)); i >= (include_end ? end : (end + 1)); i--) {
-        ret = iter->next(skip_purge_memtable);
+        ret = iter->next();
         EXPECT_EQ(OB_SUCCESS, ret);
-        assert(0 == mtk[i]->compare(*iter->get_key()));       
+        assert(0 == mtk[i]->compare(*iter->get_key()));
         EXPECT_EQ(&mtv[i], iter->get_value());
       }
     }
-    ret = iter->next(skip_purge_memtable);
+    ret = iter->next();
     EXPECT_EQ(OB_ITER_END, ret);
     // if QueryEngine::Iterator returnes ITER_END, inner iter will be freed.
-    ret = iter->next(skip_purge_memtable);
+    ret = iter->next();
     EXPECT_EQ(OB_ITER_END, ret);
   };
 
-  ret = qe.init(1);
+  ret = qe.init();
   EXPECT_EQ(OB_SUCCESS, ret);
 
   INIT_MTK(allocator, mtk[0], V("aaaa", 4), I(1024), N("1234567890.01234567890"));

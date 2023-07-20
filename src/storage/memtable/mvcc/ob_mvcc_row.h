@@ -231,9 +231,7 @@ struct ObMvccRow
   static const uint8_t F_INIT = 0x0;
   static const uint8_t F_HASH_INDEX = 0x1;
   static const uint8_t F_BTREE_INDEX = 0x2;
-  static const uint8_t F_BTREE_TAG_DEL = 0x4;
   static const uint8_t F_LOWER_LOCK_SCANED = 0x8;
-  static const uint8_t F_LOCK_DELAYED_CLEANOUT = 0x10;
 
   static const int64_t NODE_SIZE_UNIT = 1024;
   static const int64_t WARN_WAIT_LOCK_TIME = 1 *1000 * 1000;
@@ -339,12 +337,6 @@ struct ObMvccRow
   int wakeup_waiter(const ObTabletID &tablet_id, const ObMemtableKey &key);
 
   // ===================== ObMvccRow Checker Interface =====================
-  // is_partial checks whether mvcc row whose version below than version is completed
-  // TODO(handora.qc): handle it properly
-  bool is_partial(const int64_t version) const;
-  // is_del checks whether mvcc row whose version below than version is completed
-  // TODO(handora.qc): handle it properly
-  bool is_del(const int64_t version) const;
   // is_transaction_set_violation check the tsc problem for the row
   bool is_transaction_set_violation(const share::SCN snapshot_version);
 
@@ -384,18 +376,6 @@ struct ObMvccRow
   OB_INLINE void clear_btree_indexed()
   {
     ATOMIC_SUB_TAG(F_BTREE_INDEX);
-  }
-  OB_INLINE bool is_btree_tag_del() const
-  {
-    return ATOMIC_LOAD(&flag_) & F_BTREE_TAG_DEL;
-  }
-  OB_INLINE void set_btree_tag_del()
-  {
-    ATOMIC_ADD_TAG(F_BTREE_TAG_DEL);
-  }
-  OB_INLINE void clear_btree_tag_del()
-  {
-    ATOMIC_SUB_TAG(F_BTREE_TAG_DEL);
   }
   OB_INLINE void set_hash_indexed()
   {

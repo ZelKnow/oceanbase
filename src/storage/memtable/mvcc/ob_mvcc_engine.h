@@ -24,7 +24,6 @@ namespace oceanbase
 {
 namespace storage
 {
-class ObRowPurgeHandle;
 struct ObPartitionEst;
 }
 

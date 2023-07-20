@@ -53,8 +53,6 @@ struct ObMtStat
   int64_t insert_row_count_;
   int64_t update_row_count_;
   int64_t delete_row_count_;
-  int64_t purge_row_count_;
-  int64_t purge_queue_count_;
   int64_t frozen_time_;
   int64_t ready_for_flush_time_;
   int64_t create_flush_dag_time_;
@@ -451,7 +449,6 @@ public:
   virtual OB_INLINE int64_t get_timestamp() const override { return timestamp_; }
   void inc_timestamp(const int64_t timestamp) { timestamp_ = MAX(timestamp_, timestamp + 1); }
   int get_active_table_ids(common::ObIArray<uint64_t> &table_ids);
-  bool is_partition_memtable_empty(const uint64_t table_id) const;
   blocksstable::ObDatumRange &m_get_real_range(blocksstable::ObDatumRange &real_range,
                                         const blocksstable::ObDatumRange &range, const bool is_reverse) const;
   int get_tx_table_guard(storage::ObTxTableGuard &tx_table_guard);

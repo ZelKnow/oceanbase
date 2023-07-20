@@ -415,66 +415,6 @@ int ObMvccRow::unlink_trans_node(const ObMvccTransNode &node)
   return ret;
 }
 
-bool ObMvccRow::is_partial(const int64_t version) const
-{
-  // TODO(handora.qc): fix it
-  bool bool_ret = false;
-  bool is_locked = false;
-  ObMvccTransNode *last = ATOMIC_LOAD(&list_head_);
-
-  if (NULL == last) {
-    // Case1: no data on the memtable row(so no lock), so the row is completed
-    //        by the version
-    bool_ret = false;
-  } else if (FALSE_IT(is_locked = !(last->is_committed() || last->is_aborted()))) {
-  } else if (!is_locked && version > max_trans_version_.get_val_for_tx()) {
-    // Case2: no data is locked on the memtable row and the max version on the
-    //        row is smaller than the version , so the row is completed by the
-    //        version
-    bool_ret = false;
-  } else {
-    // Case3: if row is locked or the max trans version on the row is larger
-    //        than the version, we mark it as partial, otherwise we mark it as
-    //        completed
-    bool_ret = is_locked || (last->trans_version_.get_val_for_tx() > version);
-  }
-
-  return bool_ret;
-}
-
-bool ObMvccRow::is_del(const int64_t version) const
-{
-  // TODO(handora.qc): fix_it
-  bool bool_ret = false;
-  bool is_locked = false;
-  ObMvccTransNode *last = ATOMIC_LOAD(&list_head_);
-
-  if (NULL == last) {
-    // Case1: no data on the memtable row(so no lock), so the row is not deleted
-    //        by the version
-    bool_ret = false;
-  } else if (FALSE_IT(is_locked = !(last->is_committed() || last->is_aborted()))) {
-  } else if (is_locked) {
-    // Case2: data on the memtable row is locked, so the row may not deleted
-    //        by the version
-    bool_ret = false;
-  } else if (ObDmlFlag::DF_DELETE != last->get_dml_flag()) {
-    // Case3: data on the memtable row is not locked while the last node is not
-    //        delete node so the row is not deleted by the version
-    bool_ret = false;
-  } else if (last->trans_version_.get_val_for_tx() > version) {
-    // Case3: data on the memtable row is not locked, the last node is delete
-    //        node while the trans version of the last node is larger than the
-    //        version so the row may not deleted by the version
-    bool_ret = false;
-  } else {
-    // Case4: Otherwise, the row is deleted by the version
-    bool_ret = true;
-  }
-
-  return bool_ret;
-}
-
 bool ObMvccRow::need_compact(const bool for_read, const bool for_replay)
 {
   bool bool_ret = false;

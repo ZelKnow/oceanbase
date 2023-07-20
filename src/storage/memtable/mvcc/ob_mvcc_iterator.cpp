@@ -378,14 +378,12 @@ int ObMvccRowIterator::init(
   if (OB_FAIL(query_engine.scan(
       range.start_key_,  !range.border_flag_.inclusive_start(),
       range.end_key_,    !range.border_flag_.inclusive_end(),
-      ctx.snapshot_.version_.get_val_for_tx(),
       query_engine_iter_))) {
     TRANS_LOG(WARN, "query engine scan fail", K(ret));
   } else {
     ctx_ = &ctx;
     query_flag_ = query_flag;
     query_engine_ = &query_engine;
-    query_engine_iter_->set_version(ctx.snapshot_.version_.get_val_for_tx());
     is_inited_ = true;
   }
   return ret;
@@ -393,13 +391,10 @@ int ObMvccRowIterator::init(
 
 int ObMvccRowIterator::get_next_row(
     const ObMemtableKey *&key,
-    ObMvccValueIterator *&value_iter,
-    uint8_t& iter_flag)
+    ObMvccValueIterator *&value_iter)
 {
   int ret = OB_SUCCESS;
-  uint8_t read_partial_row = 0;
-  const bool skip_purge_memtable = false;
-  iter_flag = 0;
+
   if (IS_NOT_INIT) {
     TRANS_LOG(WARN, "not init", KP(this));
     ret = OB_NOT_INIT;
@@ -407,11 +402,10 @@ int ObMvccRowIterator::get_next_row(
   while (OB_SUCC(ret)) {
     const ObMemtableKey *tmp_key = NULL;
     ObMvccRow *value = NULL;
-    if (OB_FAIL(query_engine_iter_->next(skip_purge_memtable))) {
+    if (OB_FAIL(query_engine_iter_->next())) {
       if (OB_ITER_END != ret) {
         TRANS_LOG(WARN, "query engine iter next fail", K(ret), "ctx", *ctx_);
       }
-      iter_flag = read_partial_row;
     } else if (NULL == (tmp_key = query_engine_iter_->get_key())) {
       TRANS_LOG(ERROR, "unexpected key null pointer", "ctx", *ctx_);
       ret = OB_ERR_UNEXPECTED;
@@ -424,12 +418,10 @@ int ObMvccRowIterator::get_next_row(
                                         query_flag_))) {
       TRANS_LOG(WARN, "value iter init fail", K(ret), "ctx", *ctx_, KP(value), K(*value));
     } else if (!value_iter_.is_exist()) {
-      read_partial_row = (query_engine_iter_->get_iter_flag() & STORE_ITER_ROW_PARTIAL);
-      // continue
+      // mvcc row is empty(no tnode), so we continue
     } else {
       key = tmp_key;
       value_iter = &value_iter_;
-      iter_flag = (query_engine_iter_->get_iter_flag() | read_partial_row);
       break;
     }
   }
@@ -460,28 +452,6 @@ int ObMvccRowIterator::get_key_val(const ObMemtableKey*& key, ObMvccRow*& row)
     ObIQueryEngineIterator *iter = query_engine_iter_;
     key = iter->get_key();
     row = iter->get_value();
-  }
-  return ret;
-}
-
-int ObMvccRowIterator::try_purge(const ObTxSnapshot &snapshot_info,
-                                 const ObMemtableKey* key,
-                                 ObMvccRow* row)
-{
-  int ret = OB_SUCCESS;
-  bool purged = false;
-  if (IS_NOT_INIT) {
-    ret = OB_NOT_INIT;
-  } else if (NULL == key || NULL == row) {
-    ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(query_engine_->check_and_purge(key,
-                                                    row,
-                                                    snapshot_info.version_.get_val_for_tx(),
-                                                    purged))) {
-    STORAGE_LOG(ERROR, "check_and_purge", K(ret), K(key), K(row), K(snapshot_info));
-  } else if (purged) {
-    TRANS_LOG(TRACE, "RangePurger: purge", K(*key), K(row));
-    EVENT_INC(MEMSTORE_ROW_PURGE_COUNT);
   }
   return ret;
 }

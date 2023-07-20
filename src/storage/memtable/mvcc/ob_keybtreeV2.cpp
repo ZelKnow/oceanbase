@@ -23,7 +23,7 @@ void BtreeNode<BtreeKey, BtreeVal>::dump(FILE *file)
     LeafNode *leaf = reinterpret_cast<LeafNode *>(this);
     fprintf(file, "%p LeafNode: next: %p, prev: %p\n", this, leaf->get_next(), leaf->get_prev());
     for (int i = 0; i < size(); i++) {
-      fprintf(file, "%s,", to_cstring(this->get_kv_(i, permutation_).key_.get_ptr()));
+      fprintf(file, "%s,", to_cstring(this->get_kv(i, permutation_).key_.get_ptr()));
     }
     fprintf(file, "\n------------------\n");
   } else {
@@ -32,12 +32,12 @@ void BtreeNode<BtreeKey, BtreeVal>::dump(FILE *file)
     fprintf(file, "%p InternalNode\n", this);
     fprintf(file, "%p,", reinterpret_cast<BtreeNode *>(internal->get_leftmost_child()));
     for (int i = 0; i < size(); i++) {
-      fprintf(file, "%s,", to_cstring(this->get_kv_(i, permutation_).key_.get_ptr()));
+      fprintf(file, "%s,", to_cstring(this->get_kv(i, permutation_).key_.get_ptr()));
     }
     fprintf(file, "\n------------------\n");
     reinterpret_cast<BtreeNode *>(internal->get_leftmost_child())->dump(file);
     for (int i = 0; i < size(); i++) {
-      reinterpret_cast<BtreeNode *>(this->get_kv_(i, permutation_).val_)->dump(file);
+      reinterpret_cast<BtreeNode *>(this->get_kv(i, permutation_).val_)->dump(file);
     }
   }
 }
@@ -53,7 +53,7 @@ int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation
   int mid;
   while (l < r) {
     mid = (l + r + 1) / 2;
-    if (OB_FAIL(get_kv_(mid, snapshot_permutation).key_.compare(key, cmp))) {
+    if (OB_FAIL(get_kv(mid, snapshot_permutation).key_.compare(key, cmp))) {
       break;
     } else if (cmp <= 0) {
       l = mid;
@@ -62,7 +62,7 @@ int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation
     }
   }
   if (OB_SUCC(ret) && OB_UNLIKELY(l == 0)) {
-    if (OB_FAIL(get_kv_(0, snapshot_permutation).key_.compare(key, cmp))) {
+    if (OB_FAIL(get_kv(0, snapshot_permutation).key_.compare(key, cmp))) {
       // empty
     } else if (cmp > 0) {
       l = -1;
@@ -109,7 +109,7 @@ int LeafNode<BtreeKey, BtreeVal>::search(const BtreeKey key, BtreeVal &val)
   int cmp;
 
   if (OB_SUCC(this->search_(key, snapshot_permutation, pos)) && pos >= 0) {
-    BtreeKV kv = this->get_kv_(pos, snapshot_permutation);
+    BtreeKV kv = this->get_kv(pos, snapshot_permutation);
     if (OB_SUCC(kv.key_.compare(key, cmp))) {
       if (cmp != 0) {
         ret = OB_ENTRY_NOT_EXIST;
@@ -137,7 +137,7 @@ int LeafNode<BtreeKey, BtreeVal>::split_and_insert(BtreeNode *new_node, BtreeKey
   new_leaf->copy_to_(this, n / 2, n - 1);
   new_leaf->permutation_.set_size(n / 2);
 
-  fence_key = new_leaf->get_kv_(0, new_leaf->permutation_).key_;
+  fence_key = new_leaf->get_kv(0, new_leaf->permutation_).key_;
   if (OB_SUCC(fence_key.compare(key, cmp))) {
     if (cmp > 0) {
       this->insert(key, val);
@@ -156,7 +156,7 @@ int LeafNode<BtreeKey, BtreeVal>::find_left_boundary_(
   int cmp;
   is_end = true;
 
-  if (OB_FAIL(key.compare(this->get_kv_(0, snapshot_permutation).key_, cmp))) {
+  if (OB_FAIL(key.compare(this->get_kv(0, snapshot_permutation).key_, cmp))) {
     // empty
   } else if (cmp < 0) {
     // key is less than ALL keys on the node
@@ -167,7 +167,7 @@ int LeafNode<BtreeKey, BtreeVal>::find_left_boundary_(
     boundary_pos = included ? 0 : 1;
   } else if (OB_FAIL(this->search_(key, snapshot_permutation, boundary_pos))) {
     // empty
-  } else if (included && OB_FAIL(key.compare(this->get_kv_(boundary_pos, snapshot_permutation).key_, cmp))) {
+  } else if (included && OB_FAIL(key.compare(this->get_kv(boundary_pos, snapshot_permutation).key_, cmp))) {
     // empty
   } else if (!included || cmp != 0) {
     boundary_pos++;
@@ -185,7 +185,7 @@ int LeafNode<BtreeKey, BtreeVal>::find_right_boundary_(
   int cmp;
   is_end = true;
 
-  if (OB_FAIL(key.compare(this->get_kv_(snapshot_permutation.size() - 1, snapshot_permutation).key_, cmp))) {
+  if (OB_FAIL(key.compare(this->get_kv(snapshot_permutation.size() - 1, snapshot_permutation).key_, cmp))) {
 
   } else if (cmp > 0) {
     // key is greater than ALL keys on the node
@@ -198,7 +198,7 @@ int LeafNode<BtreeKey, BtreeVal>::find_right_boundary_(
     // empty
   } else if (boundary_pos == -1) {
     // empty
-  } else if (!included && OB_FAIL(key.compare(this->get_kv_(boundary_pos, snapshot_permutation).key_, cmp))) {
+  } else if (!included && OB_FAIL(key.compare(this->get_kv(boundary_pos, snapshot_permutation).key_, cmp))) {
     // empty
   } else if (!included && cmp == 0) {
     // key is equal to the key at boundary_pos, so we don't need this key
@@ -217,7 +217,7 @@ int LeafNode<BtreeKey, BtreeVal>::scan_(
   kv_queue.reset();
   int direction = is_backward ? -1 : 1;
   for (int i = start_pos; (end_pos - i) * direction >= 0 && OB_SUCC(ret); i += direction) {
-    ret = kv_queue.push(this->get_kv_(i, snapshot_permutation));
+    ret = kv_queue.push(this->get_kv(i, snapshot_permutation));
   }
   return ret;
 }
@@ -293,7 +293,7 @@ int InternalNode<BtreeKey, BtreeVal>::search(const BtreeKey key, BtreeVal &val)
     if (pos == -1) {
       val = leftmost_child_;
     } else {
-      val = this->get_kv_(pos, snapshot_permutation).val_;
+      val = this->get_kv(pos, snapshot_permutation).val_;
     }
   }
 

@@ -60,7 +60,7 @@ public:
   {
     Version stable_version;
     do {
-      stable_version = *this;
+      stable_version.data_ = ATOMIC_LOAD_ACQ(&this->data_);
     } while (stable_version.data_ & DIRTY_MASK);
     // As a reader, we need to ensure that all our read operations on the node
     // occur after we take a snapshot of the version, so a acquire fence is needed.
@@ -197,6 +197,8 @@ private:
  */
 class Permutation {
 public:
+  Permutation() : data_(0)
+  {}
   OB_INLINE uint8_t size() const
   {
     return data_ & COUNTER_MASK;
@@ -249,6 +251,9 @@ private:
 
 template <typename BtreeKey, typename BtreeVal>
 class BtreeNode {
+private:
+  using BtreeKV = BtreeKV<BtreeKey, BtreeVal>;
+
 public:
   BtreeNode() : version_(), permutation_()
   {}
@@ -259,7 +264,7 @@ public:
   }
   void dump(FILE *file);
   virtual uint8_t get_level() const = 0;
-  Version &get_version()
+  OB_INLINE Version &get_version()
   {
     return version_;
   }
@@ -274,6 +279,15 @@ public:
   OB_INLINE int size()
   {
     return permutation_.size();
+  }
+  OB_INLINE BtreeKV &get_kv(const int pos, const Permutation &snapshot_permutation)
+  {
+    int real_pos = snapshot_permutation.at(pos);
+    return kvs_[real_pos];
+  }
+  OB_INLINE Permutation get_permutation() const
+  {
+    return permutation_;
   }
   /**
    * @brief Insert \p key and \p val into the node. Doesn't check if there is enough space for insert.
@@ -295,12 +309,6 @@ public:
   virtual int split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key) = 0;
 
 protected:
-  using BtreeKV = BtreeKV<BtreeKey, BtreeVal>;
-  OB_INLINE BtreeKV &get_kv_(const int pos, const Permutation &snapshot_permutation)
-  {
-    int real_pos = snapshot_permutation.at(pos);
-    return kvs_[real_pos];
-  }
   /**
    * @brief Binary search the node to find the position of the first key that is
    *        greater than or equal to \p key.
@@ -337,7 +345,8 @@ public:
     push_ = 0;
     pop_ = 0;
   }
-  OB_INLINE int push(const BtreeKV &data) {
+  OB_INLINE int push(const BtreeKV &data)
+  {
     int ret = OB_SUCCESS;
     if (push_ >= pop_ + capacity) {
       ret = OB_ARRAY_OUT_OF_RANGE;
@@ -346,7 +355,8 @@ public:
     }
     return ret;
   }
-  OB_INLINE int pop(BtreeKV &data) {
+  OB_INLINE int pop(BtreeKV &data)
+  {
     int ret = OB_SUCCESS;
     if (pop_ >= push_) {
       ret = OB_ARRAY_OUT_OF_RANGE;
@@ -648,6 +658,7 @@ private:
   using Path = Path<BtreeKey, BtreeVal>;
   // using BtreeIterator = BtreeIterator<BtreeKey, BtreeVal>;
   friend class BtreeIterator<BtreeKey, BtreeVal>;
+
 public:
   ObKeyBtree(BtreeNodeAllocator &node_allocator) : node_allocator_(node_allocator), root_(nullptr)
   {}
@@ -706,7 +717,7 @@ private:
   {
     if (node->get_level() >= 1) {
       for (int i = 0; i < node->size(); i++) {
-        BtreeNode *child = reinterpret_cast<BtreeNode *>(node->get_kv_(i, node->permutation_).val_);
+        BtreeNode *child = reinterpret_cast<BtreeNode *>(node->get_kv(i, node->get_permutation()).val_);
         free_node(child);
       }
     }

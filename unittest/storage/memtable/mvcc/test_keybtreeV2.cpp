@@ -11,7 +11,6 @@
  */
 
 #include "storage/memtable/mvcc/ob_keybtreeV2.h"
-#include "storage/memtable/mvcc/ob_keybtree.h"
 #include "lib/allocator/ob_malloc.h"
 #include "lib/oblog/ob_log.h"
 #include "lib/random/ob_random.h"
@@ -570,13 +569,13 @@ TEST(TestLeafNodeScan, smoke_test)
   end_key.set_int(14);
   judge_node_scan(leaf_node, start_key, end_key, true, false, false, false, ans);
 
-  // (13, 15) -> 
+  // (13, 15) ->
   ans = std::vector<int64_t>({});
   start_key.set_int(13);
   end_key.set_int(15);
   judge_node_scan(leaf_node, start_key, end_key, false, false, false, false, ans);
 
-  // [100, 200] -> 
+  // [100, 200] ->
   ans = std::vector<int64_t>({});
   start_key.set_int(100);
   end_key.set_int(200);
@@ -617,8 +616,8 @@ TEST(TestLeafNodeScan, smoke_test)
   start_key.set_int(13);
   end_key.set_int(0);
   judge_node_scan(leaf_node, start_key, end_key, true, false, true, false, ans);
-  
-  // [-100,-50] -> 
+
+  // [-100,-50] ->
   ans = std::vector<int64_t>({});
   start_key.set_int(-100);
   end_key.set_int(-50);
@@ -642,13 +641,13 @@ void judge_tree_scan(ObKeyBtree *btree, FakeKey start_key, FakeKey end_key, bool
     ASSERT_EQ(val, answer[i]);
     i++;
   }
-  if(i != answer.size()) {
-    std::cout<<start_key.get_ptr()->get_int()<<" "<<end_key.get_ptr()->get_int()<<std::endl;
-    std::cout<<include_start_key<<" "<<include_end_key<<" "<<is_backward<<std::endl;
-    for(int i=0;i<answer.size();i++) {
-      std::cout<<answer[i]<<" ";
+  if (i != answer.size()) {
+    std::cout << start_key.get_ptr()->get_int() << " " << end_key.get_ptr()->get_int() << std::endl;
+    std::cout << include_start_key << " " << include_end_key << " " << is_backward << std::endl;
+    for (int i = 0; i < answer.size(); i++) {
+      std::cout << answer[i] << " ";
     }
-    std::cout<<std::endl;
+    std::cout << std::endl;
   }
   ASSERT_EQ(i, answer.size());
 }
@@ -717,12 +716,12 @@ TEST(TestBtree, smoke_test)
   // forward include
   REPEAT_COUNT = 100;
   while (REPEAT_COUNT--) {
-    int64_t start_int = ObRandom::rand(-KEY_NUM, KEY_NUM*3);
-    int64_t end_int = ObRandom::rand(start_int + 1, KEY_NUM*3);
+    int64_t start_int = ObRandom::rand(-KEY_NUM, KEY_NUM * 3);
+    int64_t end_int = ObRandom::rand(start_int + 1, KEY_NUM * 3);
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = max(0, (start_int+1)/2*2); i <= min((KEY_NUM-1)*2, end_int/2*2); i+=2) {
+    for (int i = max(0, (start_int + 1) / 2 * 2); i <= min((KEY_NUM - 1) * 2, end_int / 2 * 2); i += 2) {
       ans.push_back(i);
     }
     judge_tree_scan(&btree, start_key, end_key, true, true, false, ans);
@@ -731,12 +730,12 @@ TEST(TestBtree, smoke_test)
   // forward exclude
   REPEAT_COUNT = 100;
   while (REPEAT_COUNT--) {
-    int64_t start_int = ObRandom::rand(-KEY_NUM, KEY_NUM*3);
-    int64_t end_int = ObRandom::rand(start_int + 1, KEY_NUM*3);
+    int64_t start_int = ObRandom::rand(-KEY_NUM, KEY_NUM * 3);
+    int64_t end_int = ObRandom::rand(start_int + 1, KEY_NUM * 3);
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = max(0, (start_int+2)/2*2); i <= min((KEY_NUM-1)*2, (end_int-1)/2*2); i+=2) {
+    for (int i = max(0, (start_int + 2) / 2 * 2); i <= min((KEY_NUM - 1) * 2, (end_int - 1) / 2 * 2); i += 2) {
       ans.push_back(i);
     }
     judge_tree_scan(&btree, start_key, end_key, false, false, false, ans);
@@ -745,12 +744,12 @@ TEST(TestBtree, smoke_test)
   // backward include
   REPEAT_COUNT = 100;
   while (REPEAT_COUNT--) {
-    int64_t start_int = ObRandom::rand(-KEY_NUM, KEY_NUM*3);
-    int64_t end_int = ObRandom::rand(start_int + 1, KEY_NUM*3);
+    int64_t start_int = ObRandom::rand(-KEY_NUM, KEY_NUM * 3);
+    int64_t end_int = ObRandom::rand(start_int + 1, KEY_NUM * 3);
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = min((KEY_NUM-1)*2, end_int/2*2); i >= max(0, (start_int+1)/2*2); i-=2) {
+    for (int i = min((KEY_NUM - 1) * 2, end_int / 2 * 2); i >= max(0, (start_int + 1) / 2 * 2); i -= 2) {
       ans.push_back(i);
     }
     judge_tree_scan(&btree, end_key, start_key, true, true, true, ans);
@@ -759,12 +758,12 @@ TEST(TestBtree, smoke_test)
   // backward exclude
   REPEAT_COUNT = 100;
   while (REPEAT_COUNT--) {
-    int64_t start_int = ObRandom::rand(-KEY_NUM, KEY_NUM*3);
-    int64_t end_int = ObRandom::rand(start_int + 1, KEY_NUM*3);
+    int64_t start_int = ObRandom::rand(-KEY_NUM, KEY_NUM * 3);
+    int64_t end_int = ObRandom::rand(start_int + 1, KEY_NUM * 3);
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = min((KEY_NUM-1)*2, (end_int-1)/2*2); i >= max(0, (start_int+2)/2*2); i-=2) {
+    for (int i = min((KEY_NUM - 1) * 2, (end_int - 1) / 2 * 2); i >= max(0, (start_int + 2) / 2 * 2); i -= 2) {
       ans.push_back(i);
     }
     judge_tree_scan(&btree, end_key, start_key, false, false, true, ans);
@@ -949,7 +948,7 @@ TEST(TestSequentialConsistency, smoke_test)
   constexpr int PER_THREAD_INSERT_COUNT = 200000;
   constexpr int READ_THREAD_COUNT = 10;
 
-  int progress = -1;
+  volatile int progress = -1;
 
   FakeAllocator *allocator = FakeAllocator::get_instance();
   BtreeNodeAllocator<FakeKey, int64_t> node_allocator(*allocator);
@@ -1033,44 +1032,6 @@ TEST(TestSequentialConsistency, smoke_test)
   }
 
   free_btree(btree);
-}
-
-TEST(TestConcurrency2, smoke_test)
-{
-  constexpr uint64_t KEY_NUM = 3000000;
-  constexpr uint64_t THREAD_COUNT = 10;
-  constexpr uint64_t PER_THREAD_INSERT_COUNT = KEY_NUM / THREAD_COUNT;
-
-  FakeAllocator *allocator = FakeAllocator::get_instance();
-  keybtree::BtreeNodeAllocator<FakeKey, int64_t *> node_allocator(*allocator);
-  keybtree::ObKeyBtree<FakeKey, int64_t *> btree(node_allocator);
-
-  ASSERT_EQ(btree.init(), OB_SUCCESS);
-
-  std::thread threads[THREAD_COUNT];
-  std::vector<std::vector<int64_t>> data(THREAD_COUNT, std::vector<int64_t>(PER_THREAD_INSERT_COUNT));
-  for (int i = 0; i < THREAD_COUNT; i++) {
-    for (int j = 0; j < PER_THREAD_INSERT_COUNT; j++) {
-      data[i][j] = THREAD_COUNT * j + i;
-    }
-    std::random_shuffle(data[i].begin(), data[i].end());
-  }
-
-  for (int thread_id = 0; thread_id < THREAD_COUNT; thread_id++) {
-    threads[thread_id] = std::thread(
-        [&](int i) {
-          int64_t *val = nullptr;
-          for (int j = 0; j < PER_THREAD_INSERT_COUNT; j++) {
-            btree.insert(build_int_key(data[i][j]), val);
-          }
-        },
-        thread_id);
-  }
-  uint64_t start_rdtsc = rdtsc();
-  for (int thread_id = 0; thread_id < THREAD_COUNT; thread_id++) {
-    threads[thread_id].join();
-  }
-  std::cout << rdtsc() - start_rdtsc << std::endl;
 }
 
 }  // namespace unittest

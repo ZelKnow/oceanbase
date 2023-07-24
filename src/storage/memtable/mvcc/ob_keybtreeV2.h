@@ -16,6 +16,7 @@
 #include "lib/metrics/ob_counter.h"
 #include "lib/allocator/ob_allocator.h"
 #include "lib/utility/ob_print_utils.h"
+#include "lib/utility/utility.h"
 
 namespace oceanbase {
 
@@ -365,6 +366,16 @@ public:
     }
     return ret;
   }
+  OB_INLINE int top(BtreeKV &data)
+  {
+    int ret = OB_SUCCESS;
+    if (pop_ >= push_) {
+      ret = OB_ARRAY_OUT_OF_RANGE;
+    } else {
+      data = items_[idx(pop_)];
+    }
+    return ret;
+  }
   OB_INLINE int64_t size() const
   {
     return push_ - pop_;
@@ -657,13 +668,12 @@ private:
   using InternalNode = InternalNode<BtreeKey, BtreeVal>;
   using Path = Path<BtreeKey, BtreeVal>;
   friend class BtreeIterator<BtreeKey, BtreeVal>;
+
 public:
   ObKeyBtree(BtreeNodeAllocator &node_allocator) : node_allocator_(node_allocator), root_(nullptr)
   {}
   ~ObKeyBtree()
-  {
-    free_node(root_);
-  }
+  {}
   int init()
   {
     int ret = OB_SUCCESS;
@@ -691,11 +701,19 @@ public:
   {
     root_->dump(file);
   }
-  int set_key_range(BtreeIterator<BtreeKey, BtreeVal> &iter,
-    const BtreeKey min_key,
-    const bool include_min_key,
-    const BtreeKey max_key,
-    const bool include_max_key);
+  int set_key_range(BtreeIterator<BtreeKey, BtreeVal> &iter, const BtreeKey min_key, const bool include_min_key,
+      const BtreeKey max_key, const bool include_max_key);
+  int64_t size() const
+  {
+    return size_.value();
+  }
+  // TODO(shouluo): ensure no threads are reading the tree
+  int destroy()
+  {
+    int ret = OB_SUCCESS;
+    free_node(root_);
+    return ret;
+  }
 
 private:
   int find_node(BtreeKey &key, uint8_t level, BtreeNode *&node, Version &version, Path &path);
@@ -728,6 +746,7 @@ private:
   }
   BtreeNodeAllocator &node_allocator_;
   BtreeNode *root_;
+  common::ObSimpleCounter size_;
 };
 
 template <typename BtreeKey, typename BtreeVal>
@@ -741,20 +760,21 @@ private:
   using KVQueue = KVQueue<BtreeKey, BtreeVal>;
 
 public:
-  BtreeIterator() {}
+  BtreeIterator()
+  {}
   int init(ObKeyBtree &btree);
-  int set_key_range(const BtreeKey min_key,
-    const bool include_min_key,
-    const BtreeKey max_key,
-    const bool include_max_key);
+  int set_key_range(
+      const BtreeKey min_key, const bool include_min_key, const BtreeKey max_key, const bool include_max_key);
   int scan_forward();
   int scan_backward();
   int get_next(BtreeKey &key, BtreeVal &val);
-  void reset() {
+  void reset()
+  {
     is_end_ = true;
     kv_queue_.reset();
   }
-  bool is_reverse_scan() const {
+  bool is_reverse_scan() const
+  {
     return is_backward_;
   }
 

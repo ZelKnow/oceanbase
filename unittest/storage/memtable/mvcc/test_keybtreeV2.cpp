@@ -86,6 +86,7 @@ FakeKey build_int_key(int64_t key)
 {
   auto alloc = FakeAllocator::get_instance();
   void *block = alloc->alloc(sizeof(ObObj));
+  EXPECT_TRUE(OB_NOT_NULL(block));
   ObObj *obj = new (block) ObObj(key);
   return FakeKey(obj);
 }
@@ -666,6 +667,7 @@ void free_btree(ObKeyBtree &btree)
   while (iter.get_next(key, val) == OB_SUCCESS) {
     allocator->free(key.get_ptr());
   }
+  btree.destroy();
 }
 
 TEST(TestBtree, smoke_test)
@@ -997,12 +999,10 @@ TEST(TestSequentialConsistency, smoke_test)
   for (int thread_id = 0; thread_id < READ_THREAD_COUNT; thread_id++) {
     read_threads[thread_id] = std::thread(
         [&](int thread_id) {
-          FakeKey search_key1 = build_int_key(0);
-          FakeKey search_key2 = build_int_key(0);
           int64_t val;
           for (int i = 0; i < PER_THREAD_INSERT_COUNT; i++) {
-            search_key1.set_int(insert_keys[i * 2]);
-            search_key2.set_int(insert_keys[i * 2 + 1]);
+            FakeKey search_key1 = build_int_key(insert_keys[i * 2]);
+            FakeKey search_key2 = build_int_key(insert_keys[i * 2 + 1]);
             if (thread_id % 2 == 0) {
               while (btree.search(search_key1, val) != OB_SUCCESS) {}
               if (btree.search(search_key2, val) == OB_ENTRY_NOT_EXIST) {
@@ -1016,9 +1016,10 @@ TEST(TestSequentialConsistency, smoke_test)
                 read_results[thread_id][i] = true;
               }
             }
+            allocator->free(search_key1.get_ptr());
+            allocator->free(search_key2.get_ptr());
           }
-          allocator->free(search_key1.get_ptr());
-          allocator->free(search_key2.get_ptr());
+
         },
         thread_id);
   }

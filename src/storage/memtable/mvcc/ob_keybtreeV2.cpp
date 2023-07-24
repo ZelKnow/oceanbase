@@ -53,7 +53,8 @@ int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation
   int mid;
   while (l < r) {
     mid = (l + r + 1) / 2;
-    if (OB_FAIL(get_kv(mid, snapshot_permutation).key_.compare(key, cmp))) {
+    BtreeKey mid_key = get_kv(mid, snapshot_permutation).key_;
+    if (OB_FAIL(mid_key.compare(key, cmp))) {
       break;
     } else if (cmp <= 0) {
       l = mid;
@@ -416,6 +417,10 @@ int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
     // empty
   }
 
+  if (OB_SUCC(ret)) {
+    size_.inc(1);
+  }
+
   return ret;
 }
 
@@ -519,12 +524,9 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
   return ret;
 }
 
-template<typename BtreeKey, typename BtreeVal>
-int ObKeyBtree<BtreeKey, BtreeVal>::set_key_range(BtreeIterator<BtreeKey, BtreeVal> &iter,
-    const BtreeKey min_key,
-    const bool include_min_key,
-    const BtreeKey max_key,
-    const bool include_max_key)
+template <typename BtreeKey, typename BtreeVal>
+int ObKeyBtree<BtreeKey, BtreeVal>::set_key_range(BtreeIterator<BtreeKey, BtreeVal> &iter, const BtreeKey min_key,
+    const bool include_min_key, const BtreeKey max_key, const bool include_max_key)
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(iter.init(*this))) {
@@ -543,11 +545,10 @@ int BtreeIterator<BtreeKey, BtreeVal>::init(ObKeyBtree &btree)
   return ret;
 }
 
-template<typename BtreeKey, typename BtreeVal>
-int BtreeIterator<BtreeKey, BtreeVal>::set_key_range(const BtreeKey min_key,
-    const bool include_min_key,
-    const BtreeKey max_key,
-    const bool include_max_key) {
+template <typename BtreeKey, typename BtreeVal>
+int BtreeIterator<BtreeKey, BtreeVal>::set_key_range(
+    const BtreeKey min_key, const bool include_min_key, const BtreeKey max_key, const bool include_max_key)
+{
   int ret = OB_SUCCESS;
   int cmp = 0;
   ret = max_key.compare(min_key, cmp);
@@ -557,14 +558,15 @@ int BtreeIterator<BtreeKey, BtreeVal>::set_key_range(const BtreeKey min_key,
   include_start_key_ = include_min_key;
   include_end_key_ = include_max_key;
   is_end_ = false;
-  if(OB_SUCC(ret)) {
+  if (OB_SUCC(ret)) {
     ret = first_scan();
   }
   return ret;
 }
 
-template<typename BtreeKey, typename BtreeVal>
-int BtreeIterator<BtreeKey, BtreeVal>::first_scan() {
+template <typename BtreeKey, typename BtreeVal>
+int BtreeIterator<BtreeKey, BtreeVal>::first_scan()
+{
   int ret = OB_SUCCESS;
   Path path;
   LeafNode *next_leaf = nullptr;
@@ -574,11 +576,8 @@ int BtreeIterator<BtreeKey, BtreeVal>::first_scan() {
   while (OB_SUCC(ret)) {
     if (OB_FAIL(tree_->find_node(start_key_, 0, node, version, path))) {
       // empty
-    } else {
-      leaf_ = reinterpret_cast<LeafNode *>(node);
-    }
-    if (OB_FAIL(ret)) {
-      // empty
+    } else if (FALSE_IT(leaf_ = reinterpret_cast<LeafNode *>(node))) {
+
     } else if (OB_FAIL(leaf_->scan(
                    start_key_, end_key_, include_start_key_, include_end_key_, is_backward_, kv_queue_, is_end_))) {
       // empty

@@ -519,9 +519,52 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
   return ret;
 }
 
-template <typename BtreeKey, typename BtreeVal>
-int BtreeIterator<BtreeKey, BtreeVal>::init()
+template<typename BtreeKey, typename BtreeVal>
+int ObKeyBtree<BtreeKey, BtreeVal>::set_key_range(BtreeIterator<BtreeKey, BtreeVal> &iter,
+    const BtreeKey min_key,
+    const bool include_min_key,
+    const BtreeKey max_key,
+    const bool include_max_key)
 {
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(iter.init(*this))) {
+    // do nothing
+  } else if (OB_FAIL(iter.set_key_range(min_key, include_min_key, max_key, include_max_key))) {
+    // do nothing
+  }
+  return ret;
+}
+
+template <typename BtreeKey, typename BtreeVal>
+int BtreeIterator<BtreeKey, BtreeVal>::init(ObKeyBtree &btree)
+{
+  int ret = OB_SUCCESS;
+  tree_ = &btree;
+  return ret;
+}
+
+template<typename BtreeKey, typename BtreeVal>
+int BtreeIterator<BtreeKey, BtreeVal>::set_key_range(const BtreeKey min_key,
+    const bool include_min_key,
+    const BtreeKey max_key,
+    const bool include_max_key) {
+  int ret = OB_SUCCESS;
+  int cmp = 0;
+  ret = max_key.compare(min_key, cmp);
+  is_backward_ = (cmp < 0);
+  start_key_ = min_key;
+  end_key_ = max_key;
+  include_start_key_ = include_min_key;
+  include_end_key_ = include_max_key;
+  is_end_ = false;
+  if(OB_SUCC(ret)) {
+    ret = first_scan();
+  }
+  return ret;
+}
+
+template<typename BtreeKey, typename BtreeVal>
+int BtreeIterator<BtreeKey, BtreeVal>::first_scan() {
   int ret = OB_SUCCESS;
   Path path;
   LeafNode *next_leaf = nullptr;
@@ -606,7 +649,7 @@ int BtreeIterator<BtreeKey, BtreeVal>::scan_backward()
   while (OB_SUCC(ret) && !is_end_) {
     prev_leaf = leaf_->get_prev();
     version = prev_leaf->get_version().get_stable_snapshot();
-    if (prev_leaf != leaf_->get_prev()) {
+    if (prev_leaf != ATOMIC_LOAD_ACQ(&leaf_->get_prev())) {
       // empty
     } else if (OB_FAIL(prev_leaf->scan(end_key_, include_end_key_, true, kv_queue_, is_end_))) {
       // empty
@@ -624,7 +667,7 @@ int BtreeIterator<BtreeKey, BtreeVal>::scan_backward()
 }
 
 template <typename BtreeKey, typename BtreeVal>
-int BtreeIterator<BtreeKey, BtreeVal>::iter_next(BtreeKey &key, BtreeVal &val)
+int BtreeIterator<BtreeKey, BtreeVal>::get_next(BtreeKey &key, BtreeVal &val)
 {
   int ret = OB_SUCCESS;
   if (kv_queue_.empty()) {

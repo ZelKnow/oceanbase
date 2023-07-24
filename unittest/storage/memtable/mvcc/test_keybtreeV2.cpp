@@ -635,9 +635,10 @@ void judge_tree_scan(ObKeyBtree *btree, FakeKey start_key, FakeKey end_key, bool
   int64_t val;
   int i = 0;
 
-  BtreeIterator iter(btree, start_key, end_key, include_start_key, include_end_key, is_backward);
-  iter.init();
-  while (iter.iter_next(key, val) == OB_SUCCESS) {
+  BtreeIterator iter;
+  btree->set_key_range(iter, start_key, include_start_key, end_key, include_end_key);
+  
+  while (iter.get_next(key, val) == OB_SUCCESS) {
     ASSERT_EQ(val, answer[i]);
     i++;
   }
@@ -659,16 +660,17 @@ void free_btree(ObKeyBtree &btree)
   FakeKey key;
   int64_t val;
   FakeAllocator *allocator = FakeAllocator::get_instance();
-  BtreeIterator iter(&btree, start_key, end_key, true, true, false);
-  iter.init();
-  while (iter.iter_next(key, val) == OB_SUCCESS) {
+  BtreeIterator iter;
+  btree.set_key_range(iter, start_key, true, end_key, true);
+  
+  while (iter.get_next(key, val) == OB_SUCCESS) {
     allocator->free(key.get_ptr());
   }
 }
 
 TEST(TestBtree, smoke_test)
 {
-  constexpr int KEY_NUM = 100000;
+  constexpr int64_t KEY_NUM = 100000;
   std::vector<int64_t> data(KEY_NUM);
 
   FakeAllocator *allocator = FakeAllocator::get_instance();
@@ -679,7 +681,7 @@ TEST(TestBtree, smoke_test)
 
   FakeKey search_key = build_int_key(0);
 
-  for (int i = 0; i < KEY_NUM; i++) {
+  for (int i = 0; i <= KEY_NUM; i++) {
     data[i] = i * 2;
   }
   std::random_shuffle(data.begin(), data.end());
@@ -721,7 +723,7 @@ TEST(TestBtree, smoke_test)
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = max(0, (start_int + 1) / 2 * 2); i <= min((KEY_NUM - 1) * 2, end_int / 2 * 2); i += 2) {
+    for (int i = max(0, (start_int + 1) / 2 * 2); i <= min((KEY_NUM-1) * 2, min(end_int / 2 * 2, end_int)); i += 2) {
       ans.push_back(i);
     }
     judge_tree_scan(&btree, start_key, end_key, true, true, false, ans);
@@ -735,7 +737,7 @@ TEST(TestBtree, smoke_test)
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = max(0, (start_int + 2) / 2 * 2); i <= min((KEY_NUM - 1) * 2, (end_int - 1) / 2 * 2); i += 2) {
+    for (int i = max(0, (start_int + 2) / 2 * 2); i <= min((KEY_NUM-1) * 2, min((end_int - 1) / 2 * 2, end_int - 1)); i += 2) {
       ans.push_back(i);
     }
     judge_tree_scan(&btree, start_key, end_key, false, false, false, ans);
@@ -749,7 +751,7 @@ TEST(TestBtree, smoke_test)
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = min((KEY_NUM - 1) * 2, end_int / 2 * 2); i >= max(0, (start_int + 1) / 2 * 2); i -= 2) {
+    for (int i = min((KEY_NUM-1) * 2, min(end_int / 2 * 2, end_int)); i >= max(0, (start_int + 1) / 2 * 2); i -= 2) {
       ans.push_back(i);
     }
     judge_tree_scan(&btree, end_key, start_key, true, true, true, ans);
@@ -763,7 +765,7 @@ TEST(TestBtree, smoke_test)
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = min((KEY_NUM - 1) * 2, (end_int - 1) / 2 * 2); i >= max(0, (start_int + 2) / 2 * 2); i -= 2) {
+    for (int i = min((KEY_NUM-1) * 2, min((end_int - 1) / 2 * 2, end_int-1)); i >= max(0, (start_int + 2) / 2 * 2); i -= 2) {
       ans.push_back(i);
     }
     judge_tree_scan(&btree, end_key, start_key, false, false, true, ans);
@@ -817,10 +819,10 @@ TEST(TestEventualConsistency, smoke_test)
   FakeKey key;
   int64_t val;
 
-  BtreeIterator iter(&btree, start_key, end_key, true, true, false);
-  iter.init();
+  BtreeIterator iter;
+  btree.set_key_range(iter, start_key, true, end_key, true);
   int i = 0;
-  while (iter.iter_next(key, val) == OB_SUCCESS) {
+  while (iter.get_next(key, val) == OB_SUCCESS) {
     ASSERT_EQ(val, i);
     i++;
   }
@@ -881,21 +883,27 @@ TEST(TestMonotonicReadWrite, smoke_test)
             int64_t val;
             if (thread_id % 2 == 0) {
               // scan forward
-              BtreeIterator iter(&btree, start_key, end_key, true, true, false);
-              iter.init();
+              BtreeIterator iter;
+              btree.set_key_range(iter, start_key, true, end_key, true);
               int64_t last = -1;
-              while (iter.iter_next(key, val) == OB_SUCCESS) {
+              while (iter.get_next(key, val) == OB_SUCCESS) {
                 results.insert(val);
+                if(val <= last) {
+                  DUMP_BTREE
+                }
                 ASSERT_GT(val, last);
                 last = val;
               }
             } else {
               // scan backward
-              BtreeIterator iter(&btree, end_key, start_key, true, true, true);
-              iter.init();
+              BtreeIterator iter;
+              btree.set_key_range(iter, end_key, true, start_key, true);
               int64_t last = KEY_NUM + 1;
-              while (iter.iter_next(key, val) == OB_SUCCESS) {
+              while (iter.get_next(key, val) == OB_SUCCESS) {
                 results.insert(val);
+                if(val >= last) {
+                  DUMP_BTREE
+                }
                 ASSERT_LT(val, last);
                 last = val;
               }

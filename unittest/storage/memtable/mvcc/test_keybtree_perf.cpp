@@ -262,10 +262,11 @@ void test_concurrent_insert_scan(bool is_new) {
               is_backward = true;
             }
             if(is_new) {
-              NewBtreeIterator iter(new_btree, start_key, end_key, true, true, is_backward);
-              iter.init();
+              NewBtreeIterator iter;
+              iter.init(*new_btree);
+              iter.set_key_range(start_key, true, end_key, true);
               int ret = OB_SUCCESS;
-              while (OB_SUCC(iter.iter_next(key, val))) {}
+              while (OB_SUCC(iter.get_next(key, val))) {}
               ASSERT_EQ(ret, OB_ITER_END);
             } else {
               OldBtreeIterator iter;

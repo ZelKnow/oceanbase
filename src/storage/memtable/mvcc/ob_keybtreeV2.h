@@ -155,7 +155,7 @@ public:
     // We need to make sure all our writes to the node happen before we unlatch the node
     // Otherwise readers may not find themselves having read an inconsistent state. So
     // a release fence is needed here.
-    __atomic_thread_fence(__ATOMIC_RELEASE);
+    // __atomic_thread_fence(__ATOMIC_SEQ_CST);
     ATOMIC_BCAS(&data_, data_, data_ & ULATCH_MASK);
   }
   void reset()
@@ -433,11 +433,11 @@ public:
    * @return OB_SUCCESS on success, OB_ENTRY_NOT_EXIST if key is not exist, others on compare fail.
    */
   virtual int search(const BtreeKey key, BtreeVal &val) override;
-  OB_INLINE LeafNode *get_prev() const
+  OB_INLINE LeafNode *&get_prev()
   {
     return prev_;
   }
-  OB_INLINE LeafNode *get_next() const
+  OB_INLINE LeafNode *&get_next()
   {
     return next_;
   }
@@ -656,9 +656,7 @@ private:
   using LeafNode = LeafNode<BtreeKey, BtreeVal>;
   using InternalNode = InternalNode<BtreeKey, BtreeVal>;
   using Path = Path<BtreeKey, BtreeVal>;
-  // using BtreeIterator = BtreeIterator<BtreeKey, BtreeVal>;
   friend class BtreeIterator<BtreeKey, BtreeVal>;
-
 public:
   ObKeyBtree(BtreeNodeAllocator &node_allocator) : node_allocator_(node_allocator), root_(nullptr)
   {}
@@ -693,6 +691,11 @@ public:
   {
     root_->dump(file);
   }
+  int set_key_range(BtreeIterator<BtreeKey, BtreeVal> &iter,
+    const BtreeKey min_key,
+    const bool include_min_key,
+    const BtreeKey max_key,
+    const bool include_max_key);
 
 private:
   int find_node(BtreeKey &key, uint8_t level, BtreeNode *&node, Version &version, Path &path);
@@ -738,22 +741,25 @@ private:
   using KVQueue = KVQueue<BtreeKey, BtreeVal>;
 
 public:
-  BtreeIterator(ObKeyBtree *tree, BtreeKey start_key, BtreeKey end_key, bool include_start_key, bool include_end_key,
-      bool is_backward)
-      : tree_(tree),
-        start_key_(start_key),
-        end_key_(end_key),
-        include_start_key_(include_start_key),
-        include_end_key_(include_end_key),
-        is_backward_(is_backward),
-        is_end_(false)
-  {}
-  int init();
+  BtreeIterator() {}
+  int init(ObKeyBtree &btree);
+  int set_key_range(const BtreeKey min_key,
+    const bool include_min_key,
+    const BtreeKey max_key,
+    const bool include_max_key);
   int scan_forward();
   int scan_backward();
-  int iter_next(BtreeKey &key, BtreeVal &val);
+  int get_next(BtreeKey &key, BtreeVal &val);
+  void reset() {
+    is_end_ = true;
+    kv_queue_.reset();
+  }
+  bool is_reverse_scan() const {
+    return is_backward_;
+  }
 
 private:
+  int first_scan();
   ObKeyBtree *tree_;
   BtreeKey start_key_;
   BtreeKey end_key_;

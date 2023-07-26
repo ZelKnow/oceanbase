@@ -65,7 +65,7 @@ public:
     } while (stable_version.data_ & DIRTY_MASK);
     // As a reader, we need to ensure that all our read operations on the node
     // occur after we take a snapshot of the version, so a acquire fence is needed.
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     return stable_version;
   }
   OB_INLINE uint64_t get_vsplit() const
@@ -101,7 +101,7 @@ public:
     // We need to double check the version to make sure that all our reads on node
     // are consistent, and we need to ensure all our reads occur before our double check.
     // So a acquire fence is needed here.
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     if (is_splitting()) {
       return true;
     }
@@ -112,7 +112,7 @@ public:
   }
   bool has_inserted(Version &snapshot_version) const
   {
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     if (is_inserting()) {
       return true;
     }
@@ -127,12 +127,12 @@ public:
     // As a writer, we need to make sure that all our write operations to the node happen after
     // we set the inserting/splitting bit, otherwise the reader may not find themselves
     // having read an inconsistent state. So a release fence is needed.
-    __atomic_thread_fence(__ATOMIC_RELEASE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
   }
   void set_splitting()
   {
     data_ = data_ | SPLITTING_BIT;
-    __atomic_thread_fence(__ATOMIC_RELEASE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
   }
   void latch()
   {
@@ -156,7 +156,6 @@ public:
     // We need to make sure all our writes to the node happen before we unlatch the node
     // Otherwise readers may not find themselves having read an inconsistent state. So
     // a release fence is needed here.
-    // __atomic_thread_fence(__ATOMIC_SEQ_CST);
     ATOMIC_BCAS(&data_, data_, data_ & ULATCH_MASK);
   }
   void reset()
@@ -200,6 +199,10 @@ class Permutation {
 public:
   Permutation() : data_(0)
   {}
+  Permutation(uint64_t data) : data_(data)
+  {}
+  Permutation(Permutation &other) : data_(other.data_)
+  {}
   OB_INLINE uint8_t size() const
   {
     return data_ & COUNTER_MASK;
@@ -219,13 +222,6 @@ public:
         (((data_ & (~0ULL << offset)) << ENTRY_SIZE) | (uint64_t(value) << offset) | (data_ & ((1ULL << offset) - 1))) +
         1;
   }
-  // will not change the size
-  OB_INLINE void set(uint8_t pos, uint8_t value)
-  {
-    uint8_t offset = pos * ENTRY_SIZE + COUNTER_SIZE;
-    data_ =
-        (((data_ & (~0ULL << (offset + ENTRY_SIZE)))) | (uint64_t(value) << offset) | (data_ & ((1ULL << offset) - 1)));
-  }
   OB_INLINE void set_size(uint8_t size)
   {
     data_ = (data_ & (~COUNTER_MASK)) + size;
@@ -237,6 +233,10 @@ public:
   OB_INLINE bool is_full() const
   {
     return size() >= MAX_SIZE;
+  }
+  OB_INLINE uint64_t get_raw() const
+  {
+    return data_;
   }
 
 private:
@@ -281,14 +281,14 @@ public:
   {
     return permutation_.size();
   }
-  OB_INLINE BtreeKV &get_kv(const int pos, const Permutation &snapshot_permutation)
+  OB_INLINE BtreeKV get_kv(const int pos, const Permutation &snapshot_permutation)
   {
     int real_pos = snapshot_permutation.at(pos);
     return kvs_[real_pos];
   }
-  OB_INLINE Permutation get_permutation() const
+  OB_INLINE BtreeKV get_kv(const int pos)
   {
-    return permutation_;
+    return kvs_[pos];
   }
   /**
    * @brief Insert \p key and \p val into the node. Doesn't check if there is enough space for insert.
@@ -548,7 +548,7 @@ private:
 public:
   BtreeNodeAllocator(common::ObIAllocator &allocator) : allocator_(allocator)
   {}
-  virtual ~BtreeNodeAllocator()
+  ~BtreeNodeAllocator()
   {}
   int make_leaf(LeafNode *&leaf)
   {
@@ -575,6 +575,10 @@ public:
   OB_INLINE void free_node(BtreeNode *node)
   {
     allocator_.free(node);
+  }
+  void reset()
+  {
+    // TODO(shouluo): Modify this if we change allocator
   }
 
 private:
@@ -738,7 +742,7 @@ private:
   {
     if (node->get_level() >= 1) {
       for (int i = 0; i < node->size(); i++) {
-        BtreeNode *child = reinterpret_cast<BtreeNode *>(node->get_kv(i, node->get_permutation()).val_);
+        BtreeNode *child = reinterpret_cast<BtreeNode *>(node->get_kv(i).val_);
         free_node(child);
       }
     }

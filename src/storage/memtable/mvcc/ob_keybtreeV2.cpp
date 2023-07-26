@@ -51,6 +51,7 @@ int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation
   int r = n - 1;
   int cmp;
   int mid;
+
   while (l < r) {
     mid = (l + r + 1) / 2;
     BtreeKey mid_key = get_kv(mid, snapshot_permutation).key_;
@@ -62,8 +63,11 @@ int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation
       r = mid - 1;
     }
   }
+
   if (OB_SUCC(ret) && OB_UNLIKELY(l == 0)) {
-    if (OB_FAIL(get_kv(0, snapshot_permutation).key_.compare(key, cmp))) {
+    if (n == 0) {
+      l = -1;
+    } else if (OB_FAIL(get_kv(0, snapshot_permutation).key_.compare(key, cmp))) {
       // empty
     } else if (cmp > 0) {
       l = -1;
@@ -94,6 +98,7 @@ int BtreeNode<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
   }
   if (OB_SUCC(ret)) {
     kvs_[permutation_.size()] = BtreeKV{key, val};
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     permutation_.insert(pos + 1, permutation_.size());
   }
   return ret;
@@ -104,7 +109,7 @@ int LeafNode<BtreeKey, BtreeVal>::search(const BtreeKey key, BtreeVal &val)
 {
   // snapshot the permutation, prevent seeing inconsistent state due to
   // concurrent writers modifying permutation.
-  Permutation snapshot_permutation = this->permutation_;
+  Permutation snapshot_permutation(this->permutation_);
   int ret = OB_SUCCESS;
   int pos;
   int cmp;
@@ -230,7 +235,7 @@ int LeafNode<BtreeKey, BtreeVal>::scan(BtreeKey start_key, BtreeKey end_key, boo
   int ret = OB_SUCCESS;
   int start_pos = -1;
   int end_pos = -1;
-  Permutation snapshot_permutation = this->permutation_;
+  Permutation snapshot_permutation(this->permutation_);
   int cmp = 0;
   is_end = false;
 
@@ -265,7 +270,7 @@ int LeafNode<BtreeKey, BtreeVal>::scan(
   int ret = OB_SUCCESS;
   int start_pos;
   int end_pos;
-  Permutation snapshot_permutation = this->permutation_;
+  Permutation snapshot_permutation(this->permutation_);
   int cmp = 0;
   is_end = false;
 
@@ -288,7 +293,7 @@ int InternalNode<BtreeKey, BtreeVal>::search(const BtreeKey key, BtreeVal &val)
 {
   int ret = OB_SUCCESS;
   int pos;
-  Permutation snapshot_permutation = this->permutation_;
+  Permutation snapshot_permutation(this->permutation_);
 
   if (OB_SUCC(this->search_(key, snapshot_permutation, pos))) {
     if (pos == -1) {

@@ -136,6 +136,7 @@ int LeafNode<BtreeKey, BtreeVal>::split_and_insert(BtreeNode *new_node, BtreeKey
   int cmp;
   int ret = OB_SUCCESS;
 
+  // TODO(shouluo): inplace modify or comment
   LeafNode *new_leaf = reinterpret_cast<LeafNode *>(new_node);
   this->copy_to_(new_leaf, (n + 1) / 2, n - 1);
   this->copy_to_(new_leaf, 0, (n - 1) / 2);
@@ -146,7 +147,7 @@ int LeafNode<BtreeKey, BtreeVal>::split_and_insert(BtreeNode *new_node, BtreeKey
   fence_key = new_leaf->get_kv(0, new_leaf->permutation_).key_;
   if (OB_SUCC(fence_key.compare(key, cmp))) {
     if (cmp > 0) {
-      this->insert(key, val);
+      this->insert(key, val);  // TODO(shouluo): report fail
     } else {
       new_leaf->insert(key, val);
     }
@@ -156,7 +157,7 @@ int LeafNode<BtreeKey, BtreeVal>::split_and_insert(BtreeNode *new_node, BtreeKey
 
 template <typename BtreeKey, typename BtreeVal>
 int LeafNode<BtreeKey, BtreeVal>::find_left_boundary_(
-    BtreeKey key, bool included, Permutation snapshot_permutation, int &boundary_pos, bool &is_end)
+    BtreeKey key, bool excluded, Permutation snapshot_permutation, int &boundary_pos, bool &is_end)
 {
   int ret = OB_SUCCESS;
   int cmp;
@@ -170,12 +171,12 @@ int LeafNode<BtreeKey, BtreeVal>::find_left_boundary_(
     is_end = false;
   } else if (cmp == 0) {
     // key is equal to the minimum keys on the node
-    boundary_pos = included ? 0 : 1;
+    boundary_pos = excluded ? 1 : 0;
   } else if (OB_FAIL(this->search_(key, snapshot_permutation, boundary_pos))) {
     // empty
-  } else if (included && OB_FAIL(key.compare(this->get_kv(boundary_pos, snapshot_permutation).key_, cmp))) {
+  } else if (!excluded && OB_FAIL(key.compare(this->get_kv(boundary_pos, snapshot_permutation).key_, cmp))) {
     // empty
-  } else if (!included || cmp != 0) {
+  } else if (excluded || cmp != 0) {
     boundary_pos++;
   } else {
     // empty
@@ -185,7 +186,7 @@ int LeafNode<BtreeKey, BtreeVal>::find_left_boundary_(
 
 template <typename BtreeKey, typename BtreeVal>
 int LeafNode<BtreeKey, BtreeVal>::find_right_boundary_(
-    BtreeKey key, bool included, Permutation snapshot_permutation, int &boundary_pos, bool &is_end)
+    BtreeKey key, bool excluded, Permutation snapshot_permutation, int &boundary_pos, bool &is_end)
 {
   int ret = OB_SUCCESS;
   int cmp;
@@ -199,14 +200,14 @@ int LeafNode<BtreeKey, BtreeVal>::find_right_boundary_(
     boundary_pos = snapshot_permutation.size() - 1;
   } else if (cmp == 0) {
     // key is equal to the maximum key on the node
-    boundary_pos = included ? snapshot_permutation.size() - 1 : snapshot_permutation.size() - 2;
+    boundary_pos = excluded ? snapshot_permutation.size() - 2 : snapshot_permutation.size() - 1;
   } else if (OB_FAIL(this->search_(key, snapshot_permutation, boundary_pos))) {
     // empty
   } else if (boundary_pos == -1) {
     // empty
-  } else if (!included && OB_FAIL(key.compare(this->get_kv(boundary_pos, snapshot_permutation).key_, cmp))) {
+  } else if (excluded && OB_FAIL(key.compare(this->get_kv(boundary_pos, snapshot_permutation).key_, cmp))) {
     // empty
-  } else if (!included && cmp == 0) {
+  } else if (excluded && cmp == 0) {
     // key is equal to the key at boundary_pos, so we don't need this key
     boundary_pos--;
   } else {
@@ -229,8 +230,8 @@ int LeafNode<BtreeKey, BtreeVal>::scan_(
 }
 
 template <typename BtreeKey, typename BtreeVal>
-int LeafNode<BtreeKey, BtreeVal>::scan(BtreeKey start_key, BtreeKey end_key, bool include_start_key,
-    bool include_end_key, bool is_backward, KVQueue &kv_queue, bool &is_end)
+int LeafNode<BtreeKey, BtreeVal>::scan(BtreeKey start_key, BtreeKey end_key, bool exclude_start_key,
+    bool exclude_end_key, bool is_backward, KVQueue &kv_queue, bool &is_end)
 {
   int ret = OB_SUCCESS;
   int start_pos = -1;
@@ -240,17 +241,17 @@ int LeafNode<BtreeKey, BtreeVal>::scan(BtreeKey start_key, BtreeKey end_key, boo
   is_end = false;
 
   if (!is_backward) {
-    if (OB_FAIL(find_left_boundary_(start_key, include_start_key, snapshot_permutation, start_pos, is_end))) {
+    if (OB_FAIL(find_left_boundary_(start_key, exclude_start_key, snapshot_permutation, start_pos, is_end))) {
       // empty
-    } else if (OB_FAIL(find_right_boundary_(end_key, include_end_key, snapshot_permutation, end_pos, is_end))) {
+    } else if (OB_FAIL(find_right_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end))) {
       // empty
     } else {
       // empty
     }
   } else {
-    if (OB_FAIL(find_right_boundary_(start_key, include_start_key, snapshot_permutation, start_pos, is_end))) {
+    if (OB_FAIL(find_right_boundary_(start_key, exclude_start_key, snapshot_permutation, start_pos, is_end))) {
       // empty
-    } else if (OB_FAIL(find_left_boundary_(end_key, include_end_key, snapshot_permutation, end_pos, is_end))) {
+    } else if (OB_FAIL(find_left_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end))) {
       // empty
     } else {
       // empty
@@ -265,7 +266,7 @@ int LeafNode<BtreeKey, BtreeVal>::scan(BtreeKey start_key, BtreeKey end_key, boo
 
 template <typename BtreeKey, typename BtreeVal>
 int LeafNode<BtreeKey, BtreeVal>::scan(
-    BtreeKey end_key, bool include_end_key, bool is_backward, KVQueue &kv_queue, bool &is_end)
+    BtreeKey end_key, bool exclude_end_key, bool is_backward, KVQueue &kv_queue, bool &is_end)
 {
   int ret = OB_SUCCESS;
   int start_pos;
@@ -276,10 +277,10 @@ int LeafNode<BtreeKey, BtreeVal>::scan(
 
   if (!is_backward) {
     start_pos = 0;
-    ret = find_right_boundary_(end_key, include_end_key, snapshot_permutation, end_pos, is_end);
+    ret = find_right_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end);
   } else {
     start_pos = snapshot_permutation.size() - 1;
-    ret = find_left_boundary_(end_key, include_end_key, snapshot_permutation, end_pos, is_end);
+    ret = find_left_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end);
   }
 
   if (OB_SUCC(ret)) {
@@ -340,6 +341,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
 {
   int ret = OB_SUCCESS;
   do {
+    path.reset();
     do {
       node = get_root();
       version = node->get_version().get_stable_snapshot();
@@ -380,7 +382,10 @@ int ObKeyBtree<BtreeKey, BtreeVal>::search(BtreeKey key, BtreeVal &val)
       // empty
     } else if (OB_FAIL(leaf->search(key, val))) {
       // empty
-    } else if (leaf->get_version().has_splitted(version)) {
+      if (ret != OB_ENTRY_EXIST) {
+        // TODO(shouluo): TRANS_LOG();
+      }
+    } else if (OB_UNLIKELY(leaf->get_version().has_splitted(version))) {
       // the leaf node has splitted, retry
     } else {
       is_found = true;
@@ -390,6 +395,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::search(BtreeKey key, BtreeVal &val)
   return ret;
 }
 
+// TODO(shouluo): Latch guard
 template <typename BtreeKey, typename BtreeVal>
 int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
 {
@@ -401,8 +407,8 @@ int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
 
   while (OB_SUCC(ret) && !is_found) {
     if (OB_SUCC(find_node(key, 0, leaf, version, path))) {
-      leaf->get_version().latch();
-      if (leaf->get_version().has_splitted(version)) {
+      leaf->get_version().latch();  // TODO(shouluo): Why latch?
+      if (OB_UNLIKELY(leaf->get_version().has_splitted(version))) {
         leaf->get_version().unlatch();
       } else {
         is_found = true;
@@ -429,10 +435,11 @@ int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
   return ret;
 }
 
+// TODO(shouluo): init value
+// TODO(shouluo): format, rollback
 template <typename BtreeKey, typename BtreeVal>
 int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeVal value, Path &path)
 {
-  // TODO(shouluo): format, rollback
   int ret = OB_SUCCESS;
   int is_finished = false;
   BtreeNode *new_node;
@@ -490,12 +497,12 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
       }
     }
 
-    if (ret != OB_SUCCESS) {
+    if (OB_FAIL(ret)) {
       // empty
     } else if (!parent->is_full()) {
       // insert directly
       parent->get_version().set_inserting();
-      parent->insert(key, reinterpret_cast<BtreeVal>(new_node));
+      ret = parent->insert(key, reinterpret_cast<BtreeVal>(new_node));
       node->get_version().unlatch();
       new_node->get_version().unlatch();
       parent->get_version().unlatch();
@@ -531,12 +538,12 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
 
 template <typename BtreeKey, typename BtreeVal>
 int ObKeyBtree<BtreeKey, BtreeVal>::set_key_range(BtreeIterator<BtreeKey, BtreeVal> &iter, const BtreeKey min_key,
-    const bool include_min_key, const BtreeKey max_key, const bool include_max_key)
+    const bool exclude_min_key, const BtreeKey max_key, const bool exclude_max_key)
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(iter.init(*this))) {
     // do nothing
-  } else if (OB_FAIL(iter.set_key_range(min_key, include_min_key, max_key, include_max_key))) {
+  } else if (OB_FAIL(iter.set_key_range(min_key, exclude_min_key, max_key, exclude_max_key))) {
     // do nothing
   }
   return ret;
@@ -552,7 +559,7 @@ int BtreeIterator<BtreeKey, BtreeVal>::init(ObKeyBtree &btree)
 
 template <typename BtreeKey, typename BtreeVal>
 int BtreeIterator<BtreeKey, BtreeVal>::set_key_range(
-    const BtreeKey min_key, const bool include_min_key, const BtreeKey max_key, const bool include_max_key)
+    const BtreeKey min_key, const bool exclude_min_key, const BtreeKey max_key, const bool exclude_max_key)
 {
   int ret = OB_SUCCESS;
   int cmp = 0;
@@ -560,8 +567,8 @@ int BtreeIterator<BtreeKey, BtreeVal>::set_key_range(
   is_backward_ = (cmp < 0);
   start_key_ = min_key;
   end_key_ = max_key;
-  include_start_key_ = include_min_key;
-  include_end_key_ = include_max_key;
+  exclude_start_key_ = exclude_min_key;
+  exclude_end_key_ = exclude_max_key;
   is_end_ = false;
   if (OB_SUCC(ret)) {
     ret = first_scan();
@@ -583,8 +590,11 @@ int BtreeIterator<BtreeKey, BtreeVal>::first_scan()
       // empty
     } else if (FALSE_IT(leaf_ = reinterpret_cast<LeafNode *>(node))) {
 
+    } else if (OB_UNLIKELY(leaf_->size() == 0)) {
+      is_end_ = true;
+      break;
     } else if (OB_FAIL(leaf_->scan(
-                   start_key_, end_key_, include_start_key_, include_end_key_, is_backward_, kv_queue_, is_end_))) {
+                   start_key_, end_key_, exclude_start_key_, exclude_end_key_, is_backward_, kv_queue_, is_end_))) {
       // empty
     } else {
       next_leaf = leaf_->get_next();
@@ -622,11 +632,11 @@ int BtreeIterator<BtreeKey, BtreeVal>::scan_forward()
 
   while (OB_SUCC(ret)) {
     version = leaf_->get_version().get_stable_snapshot();
-    if (OB_FAIL(leaf_->scan(end_key_, include_end_key_, false, kv_queue_, is_end_))) {
+    if (OB_FAIL(leaf_->scan(end_key_, exclude_end_key_, false, kv_queue_, is_end_))) {
       // empty
     } else {
-      Version leaf_new_version = leaf_->get_version().get_stable_snapshot();
       next_leaf = leaf_->get_next();
+      Version leaf_new_version = leaf_->get_version().get_stable_snapshot();
       if (leaf_new_version.has_splitted(version)) {
         kv_queue_.reset();
         version = leaf_new_version;
@@ -651,14 +661,15 @@ int BtreeIterator<BtreeKey, BtreeVal>::scan_backward()
   Version version;
 
   while (OB_SUCC(ret) && !is_end_) {
+    kv_queue_.reset();
     prev_leaf = leaf_->get_prev();
     version = prev_leaf->get_version().get_stable_snapshot();
     if (prev_leaf != ATOMIC_LOAD_ACQ(&leaf_->get_prev())) {
       // empty
-    } else if (OB_FAIL(prev_leaf->scan(end_key_, include_end_key_, true, kv_queue_, is_end_))) {
+    } else if (OB_FAIL(prev_leaf->scan(end_key_, exclude_end_key_, true, kv_queue_, is_end_))) {
       // empty
     } else if (prev_leaf->get_version().has_splitted(version)) {
-      kv_queue_.reset();
+      // empty
     } else {
       leaf_ = prev_leaf;  // move to prev node
       if (OB_ISNULL(leaf_->get_prev())) {
@@ -689,7 +700,7 @@ int BtreeIterator<BtreeKey, BtreeVal>::get_next(BtreeKey &key, BtreeVal &val)
 
   if (OB_SUCC(ret)) {
     BtreeKV kv;
-    kv_queue_.pop(kv);
+    kv_queue_.pop(kv);  // TODO(shouluo): report
     key = kv.key_;
     val = kv.val_;
   }

@@ -406,35 +406,35 @@ public:
   LeafNode() : BtreeNode(), prev_(nullptr), next_(nullptr)
   {}
   /**
-   * @brief Scan the leaf node, push the key-value pair in the interval [ \p start_key, \p end_key]
+   * @brief Scan the leaf node, push the key-value pair in the interval [ \p start_key, \p end_key ]
             to \p kv_queue.
    *
    * @param start_key the start key of the scan
    * @param end_key the end key of the scan
-   * @param include_start_key true if the start key should be included in the result
+   * @param exclude_start_key true if the start key should be included in the result
                               (if the key is in the node)
-   * @param include_end_key true if the start key should be included in the scan result
+   * @param exclude_end_key true if the start key should be included in the scan result
                             (if the key is in the node)
    * @param is_backward true if it is a backward scan
    * @param[out] kv_queue the scan result queue
    * @param[out] is_end true if there are no more keys left to scan
    * @return int OB_SUCCESS on success, others on failure
    */
-  int scan(BtreeKey start_key, BtreeKey end_key, bool include_start_key, bool include_end_key, bool is_backward,
+  int scan(BtreeKey start_key, BtreeKey end_key, bool exclude_start_key, bool exclude_end_key, bool is_backward,
       KVQueue &kv_queue, bool &is_end);
   /**
    * @brief Scan the leaf node, push the key-value pair in the interval [MIN_KEY, \p end_key]
             to \p kv_queue.
    *
    * @param end_key the end key of the scan
-   * @param include_end_key true if the start key should be included in the scan result
+   * @param exclude_end_key true if the start key should be included in the scan result
                             (if the key is in the node)
    * @param is_backward true if it is a backward scan
    * @param[out] kv_queue the scan result queue
    * @param[out] is_end true if there are no more keys left to scan
    * @return int OB_SUCCESS on success, others on failure
    */
-  int scan(BtreeKey end_key, bool include_end_key, bool is_backward, KVQueue &kv_queue, bool &is_end);
+  int scan(BtreeKey end_key, bool exclude_end_key, bool is_backward, KVQueue &kv_queue, bool &is_end);
   // Does not modify perv_ and next_ pointer.
   virtual int split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key) override;
   /**
@@ -550,6 +550,7 @@ public:
   {}
   ~BtreeNodeAllocator()
   {}
+  // TODO(shouluo): template
   int make_leaf(LeafNode *&leaf)
   {
     int ret = OB_SUCCESS;
@@ -663,6 +664,7 @@ private:
 template <typename BtreeKey, typename BtreeVal>
 class BtreeIterator;
 
+// TODO(shouluo): InternalNode's template
 template <typename BtreeKey, typename BtreeVal>
 class ObKeyBtree {
 private:
@@ -705,8 +707,8 @@ public:
   {
     root_->dump(file);
   }
-  int set_key_range(BtreeIterator<BtreeKey, BtreeVal> &iter, const BtreeKey min_key, const bool include_min_key,
-      const BtreeKey max_key, const bool include_max_key);
+  int set_key_range(BtreeIterator<BtreeKey, BtreeVal> &iter, const BtreeKey min_key, const bool exclude_min_key,
+      const BtreeKey max_key, const bool exclude_max_key);
   int64_t size() const
   {
     return size_.value();
@@ -768,7 +770,7 @@ public:
   {}
   int init(ObKeyBtree &btree);
   int set_key_range(
-      const BtreeKey min_key, const bool include_min_key, const BtreeKey max_key, const bool include_max_key);
+      const BtreeKey min_key, const bool exclude_min_key, const BtreeKey max_key, const bool exclude_max_key);
   int scan_forward();
   int scan_backward();
   int get_next(BtreeKey &key, BtreeVal &val);
@@ -787,8 +789,8 @@ private:
   ObKeyBtree *tree_;
   BtreeKey start_key_;
   BtreeKey end_key_;
-  bool include_start_key_;
-  bool include_end_key_;
+  bool exclude_start_key_;
+  bool exclude_end_key_;
   bool is_backward_;
   LeafNode *leaf_;
   bool is_end_;

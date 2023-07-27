@@ -453,7 +453,7 @@ TEST(TestLeafNode, smoke_test)
   }
 }
 
-void judge_node_scan(LeafNode *leaf, FakeKey start_key, FakeKey end_key, bool include_start_key, bool include_end_key,
+void judge_node_scan(LeafNode *leaf, FakeKey start_key, FakeKey end_key, bool exclude_start_key, bool exclude_end_key,
     bool is_backward, bool real_is_end, std::vector<int64_t> answer)
 {
   KVQueue<FakeKey, int64_t> q;
@@ -461,7 +461,7 @@ void judge_node_scan(LeafNode *leaf, FakeKey start_key, FakeKey end_key, bool in
   BtreeKV<FakeKey, int64_t> kv;
   int i = 0;
 
-  ASSERT_EQ(leaf->scan(start_key, end_key, include_start_key, include_end_key, is_backward, q, is_end), OB_SUCCESS);
+  ASSERT_EQ(leaf->scan(start_key, end_key, exclude_start_key, exclude_end_key, is_backward, q, is_end), OB_SUCCESS);
   ASSERT_EQ(is_end, real_is_end);
   ASSERT_EQ(answer.size(), q.size());
   while (q.size() > 0) {
@@ -502,150 +502,150 @@ TEST(TestLeafNodeScan, smoke_test)
   ans = std::vector<int64_t>({3, 5, 7, 9});
   start_key.set_int(2);
   end_key.set_int(10);
-  judge_node_scan(leaf_node, start_key, end_key, true, true, false, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, false, false, true, ans);
 
   // [5, 10] -> 5,7,9
   ans = std::vector<int64_t>({5, 7, 9});
   start_key.set_int(5);
   end_key.set_int(10);
-  judge_node_scan(leaf_node, start_key, end_key, true, true, false, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, false, false, true, ans);
 
   // [2, 11] -> 3,5,7,9,11
   ans = std::vector<int64_t>({3, 5, 7, 9, 11});
   start_key.set_int(2);
   end_key.set_int(11);
-  judge_node_scan(leaf_node, start_key, end_key, true, true, false, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, false, false, true, ans);
 
   // (3, 11) -> 5,7,9
   ans = std::vector<int64_t>({5, 7, 9});
   start_key.set_int(3);
   end_key.set_int(11);
-  judge_node_scan(leaf_node, start_key, end_key, false, false, false, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, true, true, false, true, ans);
 
   // (2, 7) -> 3,5
   ans = std::vector<int64_t>({3, 5});
   start_key.set_int(2);
   end_key.set_int(7);
-  judge_node_scan(leaf_node, start_key, end_key, false, false, false, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, true, true, false, true, ans);
 
   // (3, 8) -> 5,7
   ans = std::vector<int64_t>({5, 7});
   start_key.set_int(3);
   end_key.set_int(8);
-  judge_node_scan(leaf_node, start_key, end_key, false, false, false, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, true, true, false, true, ans);
 
   // [3, 8) -> 3,5,7
   ans = std::vector<int64_t>({3, 5, 7});
   start_key.set_int(3);
   end_key.set_int(8);
-  judge_node_scan(leaf_node, start_key, end_key, true, false, false, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, true, false, true, ans);
 
   // (3, 9] -> 5,7,9
   ans = std::vector<int64_t>({5, 7, 9});
   start_key.set_int(3);
   end_key.set_int(9);
-  judge_node_scan(leaf_node, start_key, end_key, false, true, false, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, true, false, false, true, ans);
 
   // [9, 13] -> 9,11,13
   ans = std::vector<int64_t>({9, 11, 13});
   start_key.set_int(9);
   end_key.set_int(13);
-  judge_node_scan(leaf_node, start_key, end_key, true, true, false, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, false, false, true, ans);
 
   // [0, 14] -> 1,3,5,7,9,11,13
   ans = std::vector<int64_t>({1, 3, 5, 7, 9, 11, 13});
   start_key.set_int(0);
   end_key.set_int(14);
-  judge_node_scan(leaf_node, start_key, end_key, true, true, false, false, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, false, false, false, ans);
 
   // [9, 13) -> 9,11
   ans = std::vector<int64_t>({9, 11});
   start_key.set_int(9);
   end_key.set_int(13);
-  judge_node_scan(leaf_node, start_key, end_key, true, false, false, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, true, false, true, ans);
 
   // [9, 14) -> 9,11,13
   ans = std::vector<int64_t>({9, 11, 13});
   start_key.set_int(9);
   end_key.set_int(14);
-  judge_node_scan(leaf_node, start_key, end_key, true, false, false, false, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, true, false, false, ans);
 
   // (13, 15) ->
   ans = std::vector<int64_t>({});
   start_key.set_int(13);
   end_key.set_int(15);
-  judge_node_scan(leaf_node, start_key, end_key, false, false, false, false, ans);
+  judge_node_scan(leaf_node, start_key, end_key, true, true, false, false, ans);
 
   // [100, 200] ->
   ans = std::vector<int64_t>({});
   start_key.set_int(100);
   end_key.set_int(200);
-  judge_node_scan(leaf_node, start_key, end_key, true, true, false, false, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, false, false, false, ans);
 
   // [10,2] -> 9,7,5,3
   ans = std::vector<int64_t>({9, 7, 5, 3});
   start_key.set_int(10);
   end_key.set_int(2);
-  judge_node_scan(leaf_node, start_key, end_key, true, true, true, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, false, true, true, ans);
 
   // [11,1] -> 11,9,7,5,3,1
   ans = std::vector<int64_t>({11, 9, 7, 5, 3, 1});
   start_key.set_int(11);
   end_key.set_int(1);
-  judge_node_scan(leaf_node, start_key, end_key, true, true, true, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, false, true, true, ans);
 
   // (11,1) -> 9,7,5,3
   ans = std::vector<int64_t>({9, 7, 5, 3});
   start_key.set_int(11);
   end_key.set_int(1);
-  judge_node_scan(leaf_node, start_key, end_key, false, false, true, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, true, true, true, true, ans);
 
   // (11,1] -> 9,7,5,3,1
   ans = std::vector<int64_t>({9, 7, 5, 3, 1});
   start_key.set_int(11);
   end_key.set_int(1);
-  judge_node_scan(leaf_node, start_key, end_key, false, true, true, true, ans);
+  judge_node_scan(leaf_node, start_key, end_key, true, false, true, true, ans);
 
   // [13,0] -> 13,11,9,7,5,3,1
   ans = std::vector<int64_t>({13, 11, 9, 7, 5, 3, 1});
   start_key.set_int(13);
   end_key.set_int(0);
-  judge_node_scan(leaf_node, start_key, end_key, true, true, true, false, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, false, true, false, ans);
 
   // [13,0) -> 13,11,9,7,5,3,1
   ans = std::vector<int64_t>({13, 11, 9, 7, 5, 3, 1});
   start_key.set_int(13);
   end_key.set_int(0);
-  judge_node_scan(leaf_node, start_key, end_key, true, false, true, false, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, true, true, false, ans);
 
   // [-100,-50] ->
   ans = std::vector<int64_t>({});
   start_key.set_int(-100);
   end_key.set_int(-50);
-  judge_node_scan(leaf_node, start_key, end_key, true, true, true, false, ans);
+  judge_node_scan(leaf_node, start_key, end_key, false, false, true, false, ans);
 
   for (int i = 0; i < keys.size(); i++) {
     allocator->free(keys[i].obj_);
   }
 }
 
-void judge_tree_scan(ObKeyBtree *btree, FakeKey start_key, FakeKey end_key, bool include_start_key,
-    bool include_end_key, bool is_backward, std::vector<int64_t> &answer)
+void judge_tree_scan(ObKeyBtree *btree, FakeKey start_key, FakeKey end_key, bool exclude_start_key,
+    bool exclude_end_key, bool is_backward, std::vector<int64_t> &answer)
 {
   FakeKey key;
   int64_t val;
   int i = 0;
 
   BtreeIterator iter;
-  btree->set_key_range(iter, start_key, include_start_key, end_key, include_end_key);
-  
+  btree->set_key_range(iter, start_key, exclude_start_key, end_key, exclude_end_key);
+
   while (iter.get_next(key, val) == OB_SUCCESS) {
     ASSERT_EQ(val, answer[i]);
     i++;
   }
   if (i != answer.size()) {
     std::cout << start_key.get_ptr()->get_int() << " " << end_key.get_ptr()->get_int() << std::endl;
-    std::cout << include_start_key << " " << include_end_key << " " << is_backward << std::endl;
+    std::cout << exclude_start_key << " " << exclude_end_key << " " << is_backward << std::endl;
     for (int i = 0; i < answer.size(); i++) {
       std::cout << answer[i] << " ";
     }
@@ -663,7 +663,7 @@ void free_btree(ObKeyBtree &btree)
   FakeAllocator *allocator = FakeAllocator::get_instance();
   BtreeIterator iter;
   btree.set_key_range(iter, start_key, true, end_key, true);
-  
+
   while (iter.get_next(key, val) == OB_SUCCESS) {
     allocator->free(key.get_ptr());
   }
@@ -725,10 +725,10 @@ TEST(TestBtree, smoke_test)
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = max(0, (start_int + 1) / 2 * 2); i <= min((KEY_NUM-1) * 2, min(end_int / 2 * 2, end_int)); i += 2) {
+    for (int i = max(0, (start_int + 1) / 2 * 2); i <= min((KEY_NUM - 1) * 2, min(end_int / 2 * 2, end_int)); i += 2) {
       ans.push_back(i);
     }
-    judge_tree_scan(&btree, start_key, end_key, true, true, false, ans);
+    judge_tree_scan(&btree, start_key, end_key, false, false, false, ans);
   }
 
   // forward exclude
@@ -739,10 +739,11 @@ TEST(TestBtree, smoke_test)
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = max(0, (start_int + 2) / 2 * 2); i <= min((KEY_NUM-1) * 2, min((end_int - 1) / 2 * 2, end_int - 1)); i += 2) {
+    for (int i = max(0, (start_int + 2) / 2 * 2); i <= min((KEY_NUM - 1) * 2, min((end_int - 1) / 2 * 2, end_int - 1));
+         i += 2) {
       ans.push_back(i);
     }
-    judge_tree_scan(&btree, start_key, end_key, false, false, false, ans);
+    judge_tree_scan(&btree, start_key, end_key, true, true, false, ans);
   }
 
   // backward include
@@ -753,10 +754,10 @@ TEST(TestBtree, smoke_test)
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = min((KEY_NUM-1) * 2, min(end_int / 2 * 2, end_int)); i >= max(0, (start_int + 1) / 2 * 2); i -= 2) {
+    for (int i = min((KEY_NUM - 1) * 2, min(end_int / 2 * 2, end_int)); i >= max(0, (start_int + 1) / 2 * 2); i -= 2) {
       ans.push_back(i);
     }
-    judge_tree_scan(&btree, end_key, start_key, true, true, true, ans);
+    judge_tree_scan(&btree, end_key, start_key, false, false, true, ans);
   }
 
   // backward exclude
@@ -767,10 +768,11 @@ TEST(TestBtree, smoke_test)
     start_key.set_int(start_int);
     end_key.set_int(end_int);
     std::vector<int64_t> ans;
-    for (int i = min((KEY_NUM-1) * 2, min((end_int - 1) / 2 * 2, end_int-1)); i >= max(0, (start_int + 2) / 2 * 2); i -= 2) {
+    for (int i = min((KEY_NUM - 1) * 2, min((end_int - 1) / 2 * 2, end_int - 1)); i >= max(0, (start_int + 2) / 2 * 2);
+         i -= 2) {
       ans.push_back(i);
     }
-    judge_tree_scan(&btree, end_key, start_key, false, false, true, ans);
+    judge_tree_scan(&btree, end_key, start_key, true, true, true, ans);
   }
 
   free_btree(btree);
@@ -822,7 +824,7 @@ TEST(TestEventualConsistency, smoke_test)
   int64_t val;
 
   BtreeIterator iter;
-  btree.set_key_range(iter, start_key, true, end_key, true);
+  btree.set_key_range(iter, start_key, false, end_key, false);
   int i = 0;
   while (iter.get_next(key, val) == OB_SUCCESS) {
     ASSERT_EQ(val, i);
@@ -886,11 +888,11 @@ TEST(TestMonotonicReadWrite, smoke_test)
             if (thread_id % 2 == 0) {
               // scan forward
               BtreeIterator iter;
-              btree.set_key_range(iter, start_key, true, end_key, true);
+              btree.set_key_range(iter, start_key, false, end_key, false);
               int64_t last = -1;
               while (iter.get_next(key, val) == OB_SUCCESS) {
                 results.insert(val);
-                if(val <= last) {
+                if (val <= last) {
                   DUMP_BTREE
                 }
                 ASSERT_GT(val, last);
@@ -899,11 +901,11 @@ TEST(TestMonotonicReadWrite, smoke_test)
             } else {
               // scan backward
               BtreeIterator iter;
-              btree.set_key_range(iter, end_key, true, start_key, true);
+              btree.set_key_range(iter, end_key, false, start_key, false);
               int64_t last = KEY_NUM + 1;
               while (iter.get_next(key, val) == OB_SUCCESS) {
                 results.insert(val);
-                if(val >= last) {
+                if (val >= last) {
                   DUMP_BTREE
                 }
                 ASSERT_LT(val, last);
@@ -1019,7 +1021,6 @@ TEST(TestSequentialConsistency, smoke_test)
             allocator->free(search_key1.get_ptr());
             allocator->free(search_key2.get_ptr());
           }
-
         },
         thread_id);
   }

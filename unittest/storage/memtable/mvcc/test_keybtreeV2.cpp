@@ -643,14 +643,6 @@ void judge_tree_scan(ObKeyBtree *btree, FakeKey start_key, FakeKey end_key, bool
     ASSERT_EQ(val, answer[i]);
     i++;
   }
-  if (i != answer.size()) {
-    std::cout << start_key.get_ptr()->get_int() << " " << end_key.get_ptr()->get_int() << std::endl;
-    std::cout << exclude_start_key << " " << exclude_end_key << " " << is_backward << std::endl;
-    for (int i = 0; i < answer.size(); i++) {
-      std::cout << answer[i] << " ";
-    }
-    std::cout << std::endl;
-  }
   ASSERT_EQ(i, answer.size());
 }
 
@@ -783,8 +775,8 @@ TEST(TestBtree, smoke_test)
 
 TEST(TestEventualConsistency, smoke_test)
 {
-  constexpr uint64_t KEY_NUM = 3000000;
-  constexpr uint64_t THREAD_COUNT = 10;
+  constexpr uint64_t KEY_NUM = 6400000;
+  constexpr uint64_t THREAD_COUNT = 64;
   constexpr uint64_t PER_THREAD_INSERT_COUNT = KEY_NUM / THREAD_COUNT;
 
   FakeAllocator *allocator = FakeAllocator::get_instance();
@@ -839,10 +831,10 @@ TEST(TestEventualConsistency, smoke_test)
 
 TEST(TestMonotonicReadWrite, smoke_test)
 {
-  constexpr int KEY_NUM = 3000000;
-  constexpr int WRITE_THREAD_COUNT = 10;
+  constexpr int KEY_NUM = 6400000;
+  constexpr int WRITE_THREAD_COUNT = 32;
   constexpr int PER_THREAD_INSERT_COUNT = KEY_NUM / WRITE_THREAD_COUNT;
-  constexpr int SCAN_THREAD_COUNT = 10;
+  constexpr int SCAN_THREAD_COUNT = 32;
   constexpr int PER_THREAD_SCAN_COUNT = 8;
 
   FakeAllocator *allocator = FakeAllocator::get_instance();
@@ -958,7 +950,7 @@ TEST(TestMonotonicReadWrite, smoke_test)
 TEST(TestSequentialConsistency, smoke_test)
 {
   constexpr int PER_THREAD_INSERT_COUNT = 200000;
-  constexpr int READ_THREAD_COUNT = 10;
+  constexpr int READ_THREAD_COUNT = 16;
 
   volatile int progress = -1;
 

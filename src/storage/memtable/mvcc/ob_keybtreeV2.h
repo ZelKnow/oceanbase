@@ -154,8 +154,7 @@ public:
       increase_vsplit();
     }
     // We need to make sure all our writes to the node happen before we unlatch the node
-    // Otherwise readers may not find themselves having read an inconsistent state. So
-    // a release fence is needed here.
+    // Otherwise readers may not find themselves having read an inconsistent state.
     ATOMIC_BCAS(&data_, data_, data_ & ULATCH_MASK);
   }
   void reset()
@@ -188,10 +187,15 @@ private:
  *    permutation to ensure that it sees consistent state during searching on leaf node, so that as long
  *    as no splits have occurred, the reader can safely assume that the value it get is correct.
  *
- * This 64-bit Permutation can be divided into 16 4-bit sub fields. The lowest 4 bits represent the size
- * of the Node, and the remaining are 15 4-bit integers that represent the actual position of the corresponding
+ * of the Node, and the remaining are 15 4-bit integers that represent the actual  * This 64-bit Permutation can be divided into 16 4-bit sub fields. The lowest 4 bits represent the size
+position of the corresponding
  * key in the correct order.
  *
+ *  _______________________
+ * |...| 2 | 1 | 0 | size |
+ * |___|___|___|___|______|
+ *       4   4   4   4bit   --- 64bit
+ * 
  * Note that the methods of Permutation DO NOT check the validity of the parameters(e.g. pos should be less than
  * max size)
  */
@@ -264,6 +268,7 @@ public:
     permutation_.reset();
   }
   void dump(FILE *file);
+  // The higher the node, the higher its level.
   virtual uint8_t get_level() const = 0;
   OB_INLINE Version &get_version()
   {
@@ -277,16 +282,16 @@ public:
   {
     return Permutation::max_size();
   }
-  OB_INLINE int size()
+  OB_INLINE int size() const
   {
     return permutation_.size();
   }
-  OB_INLINE BtreeKV get_kv(const int pos, const Permutation &snapshot_permutation)
+  OB_INLINE BtreeKV &get_kv(const int pos, const Permutation &snapshot_permutation)
   {
     int real_pos = snapshot_permutation.at(pos);
     return kvs_[real_pos];
   }
-  OB_INLINE BtreeKV get_kv(const int pos)
+  OB_INLINE BtreeKV &get_kv(const int pos)
   {
     return kvs_[pos];
   }
@@ -349,7 +354,7 @@ public:
   OB_INLINE int push(const BtreeKV &data)
   {
     int ret = OB_SUCCESS;
-    if (push_ >= pop_ + capacity) {
+    if (OB_UNLIKELY(push_ >= pop_ + capacity)) {
       ret = OB_ARRAY_OUT_OF_RANGE;
     } else {
       items_[idx(push_++)] = data;
@@ -359,7 +364,7 @@ public:
   OB_INLINE int pop(BtreeKV &data)
   {
     int ret = OB_SUCCESS;
-    if (pop_ >= push_) {
+    if (OB_UNLIKELY(pop_ >= push_)) {
       ret = OB_ARRAY_OUT_OF_RANGE;
     } else {
       data = items_[idx(pop_++)];
@@ -369,7 +374,7 @@ public:
   OB_INLINE int top(BtreeKV &data)
   {
     int ret = OB_SUCCESS;
-    if (pop_ >= push_) {
+    if (OB_UNLIKELY(pop_ >= push_)) {
       ret = OB_ARRAY_OUT_OF_RANGE;
     } else {
       data = items_[idx(pop_)];
@@ -550,28 +555,11 @@ public:
   {}
   ~BtreeNodeAllocator()
   {}
-  // TODO(shouluo): template
-  int make_leaf(LeafNode *&leaf)
-  {
-    int ret = OB_SUCCESS;
-    void *block = allocator_.alloc(sizeof(LeafNode));
-    if (OB_ISNULL(block)) {
-      ret = OB_ALLOCATE_MEMORY_FAILED;
-    } else {
-      leaf = new (block) LeafNode;
-    }
-    return ret;
+  int make_leaf(LeafNode *&leaf) {
+    return make_node_<LeafNode>(leaf);
   }
-  int make_internal(InternalNode *&internal)
-  {
-    int ret = OB_SUCCESS;
-    void *block = allocator_.alloc(sizeof(InternalNode));
-    if (OB_ISNULL(block)) {
-      ret = OB_ALLOCATE_MEMORY_FAILED;
-    } else {
-      internal = new (block) InternalNode;
-    }
-    return ret;
+  int make_internal(InternalNode *&internal) {
+    return make_node_<InternalNode>(internal);
   }
   OB_INLINE void free_node(BtreeNode *node)
   {
@@ -583,6 +571,18 @@ public:
   }
 
 private:
+  template <typename NodeType>
+  int make_node_(NodeType *&node)
+  {
+    int ret = OB_SUCCESS;
+    void *block = allocator_.alloc(sizeof(NodeType));
+    if (OB_ISNULL(block)) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      node = new (block) NodeType;
+    }
+    return ret;
+  }
   common::ObIAllocator &allocator_;
 };
 
@@ -603,7 +603,7 @@ public:
   OB_INLINE int push(BtreeNode *node, Version version)
   {
     int ret = OB_SUCCESS;
-    if (depth_ >= MAX_DEPTH) {
+    if (OB_UNLIKELY(depth_ >= MAX_DEPTH)) {
       ret = OB_ARRAY_OUT_OF_RANGE;
     } else {
       path_[depth_].node_ = node;
@@ -628,7 +628,7 @@ public:
   OB_INLINE int top(BtreeNode *&node, Version &version)
   {
     int ret = OB_SUCCESS;
-    if (depth_ <= 0) {
+    if (OB_UNLIKELY(depth_ <= 0)) {
       ret = OB_ARRAY_OUT_OF_RANGE;
       node = nullptr;
     } else {
@@ -728,7 +728,10 @@ private:
   {
     int ret = OB_SUCCESS;
     InternalNode *new_root;
-    if (OB_SUCC(node_allocator_.make_internal(new_root))) {
+    // At this point we're already holding the old root's latch
+    if (OB_FAIL(node_allocator_.make_internal(new_root))) {
+      // empty
+    } else {
       new_root->set_level(node->get_level() + 1);
       new_root->set_leftmost_child(reinterpret_cast<BtreeVal>(node));
       new_root->insert(fence_key, reinterpret_cast<BtreeVal>(new_node));

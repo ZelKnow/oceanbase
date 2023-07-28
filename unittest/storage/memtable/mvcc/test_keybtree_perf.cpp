@@ -129,11 +129,12 @@ using OldBtreeNodeAllocator = keybtree::BtreeNodeAllocator<FakeKey, int64_t*>;
 using OldBtree = keybtree::ObKeyBtree<FakeKey, int64_t*>;
 using OldBtreeIterator = keybtree::BtreeIterator<FakeKey, int64_t*>;
 
-void test_concurrent_insert(bool is_new) {
-  constexpr uint64_t KEY_NUM = 3000000;
-  constexpr uint64_t THREAD_COUNT = 10;
-  constexpr uint64_t PER_THREAD_INSERT_COUNT = KEY_NUM / THREAD_COUNT;
+uint64_t THREAD_COUNT;
+uint64_t KEY_NUM;
+uint64_t INSERT_SCAN_RATIO = 10;
 
+void test_concurrent_insert(bool is_new) {
+  uint64_t PER_THREAD_INSERT_COUNT = KEY_NUM / THREAD_COUNT;
   NewBtree *new_btree;
   OldBtree *old_btree;
 
@@ -149,7 +150,7 @@ void test_concurrent_insert(bool is_new) {
     ASSERT_EQ(old_btree->init(), OB_SUCCESS);
   }
 
-  std::thread threads[THREAD_COUNT];
+  std::vector<std::thread> threads(THREAD_COUNT);
   std::vector<std::vector<FakeKey>> data(THREAD_COUNT, std::vector<FakeKey>(PER_THREAD_INSERT_COUNT));
   for (int i = 0; i < THREAD_COUNT; i++) {
     for (int j = 0; j < PER_THREAD_INSERT_COUNT; j++) {
@@ -180,8 +181,10 @@ void test_concurrent_insert(bool is_new) {
   }
   if(is_new) {
     std::cout<<"New Btree Concurrent Insert: "<<rdtsc()-start_time<<std::endl;
+    new_btree->destroy();
   } else {
     std::cout<<"Old Btree Concurrent Insert: "<<rdtsc()-start_time<<std::endl;
+    old_btree->destroy();
   }
 
   for(int i=0;i<data.size();i++) {
@@ -202,10 +205,7 @@ TEST(TestOldBtreeConcurrentInsert, smoke_test)
 }
 
 void test_concurrent_insert_scan(bool is_new) {
-  constexpr int KEY_NUM = 3000000;
-  constexpr int THREAD_COUNT = 10;
-  constexpr int PER_THREAD_INSERT_COUNT = KEY_NUM / THREAD_COUNT;
-  constexpr int INSERT_SCAN_RATIO = 20;
+  uint64_t PER_THREAD_INSERT_COUNT = KEY_NUM / THREAD_COUNT;
 
   NewBtree *new_btree;
   OldBtree *old_btree;
@@ -231,7 +231,7 @@ void test_concurrent_insert_scan(bool is_new) {
     std::random_shuffle(data[i].begin(), data[i].end());
   }
 
-  std::thread threads[THREAD_COUNT];
+  std::vector<std::thread> threads(THREAD_COUNT);
   for (int thread_id = 0; thread_id < THREAD_COUNT; thread_id++) {
     threads[thread_id] = std::thread(
         [&](int i) {
@@ -250,13 +250,13 @@ void test_concurrent_insert_scan(bool is_new) {
               continue;
             } else if (j % (2*INSERT_SCAN_RATIO) == 0) {
               int64_t start_int = ObRandom::rand(0, KEY_NUM);
-              int64_t end_int = start_int + 2000;
+              int64_t end_int = start_int + 4000;
               start_key.set_int(start_int);
               end_key.set_int(end_int);
               is_backward = false;
             } else {
               int64_t start_int = ObRandom::rand(0, KEY_NUM);
-              int64_t end_int = start_int + 2000;
+              int64_t end_int = start_int + 4000;
               start_key.set_int(end_int);
               end_key.set_int(start_int);
               is_backward = true;
@@ -286,8 +286,10 @@ void test_concurrent_insert_scan(bool is_new) {
   }
   if(is_new) {
     std::cout<<"New Btree Concurrent Insert And Scan: "<<rdtsc()-start_time<<std::endl;
+    new_btree->destroy();
   } else {
     std::cout<<"Old Btree Concurrent Insert And Scan: "<<rdtsc()-start_time<<std::endl;
+    old_btree->destroy();
   }
 
   for(int i=0;i<data.size();i++) {
@@ -314,5 +316,7 @@ int main(int argc, char **argv)
   oceanbase::common::ObLogger::get_logger().set_file_name("test_keybtreeV2.log", true);
   oceanbase::common::ObLogger::get_logger().set_log_level("INFO");
   ::testing::InitGoogleTest(&argc, argv);
+  oceanbase::unittest::THREAD_COUNT = atoi(argv[1]);
+  oceanbase::unittest::KEY_NUM = atoi(argv[2]);
   return RUN_ALL_TESTS();
 }

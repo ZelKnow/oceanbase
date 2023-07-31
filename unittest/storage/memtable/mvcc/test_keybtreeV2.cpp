@@ -465,7 +465,7 @@ void judge_node_scan(LeafNode *leaf, FakeKey start_key, FakeKey end_key, bool ex
   ASSERT_EQ(is_end, real_is_end);
   ASSERT_EQ(answer.size(), q.size());
   while (q.size() > 0) {
-    ASSERT_EQ(q.pop(kv), OB_SUCCESS);
+    q.pop(kv);
     ASSERT_EQ(answer[i], kv.val_);
     i++;
   }

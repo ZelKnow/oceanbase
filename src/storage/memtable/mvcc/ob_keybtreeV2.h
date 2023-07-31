@@ -20,12 +20,15 @@
 
 namespace oceanbase {
 
+enum { MAX_HEIGHT = 16 };
+
 namespace keybtreeV2 {
 
 template <typename BtreeKey, typename BtreeVal>
 struct BtreeKV {
   BtreeKey key_;  // 8byte
   BtreeVal val_;  // 8byte
+  TO_STRING_KV(K_(key), KP_(val));
 };
 
 /**
@@ -161,6 +164,7 @@ public:
   {
     data_ = 0;
   }
+  TO_STRING_KV(K_(data));
 
 private:
   uint64_t data_;
@@ -187,15 +191,15 @@ private:
  *    permutation to ensure that it sees consistent state during searching on leaf node, so that as long
  *    as no splits have occurred, the reader can safely assume that the value it get is correct.
  *
- * of the Node, and the remaining are 15 4-bit integers that represent the actual  * This 64-bit Permutation can be divided into 16 4-bit sub fields. The lowest 4 bits represent the size
-position of the corresponding
+ * of the Node, and the remaining are 15 4-bit integers that represent the actual  * This 64-bit Permutation can be
+divided into 16 4-bit sub fields. The lowest 4 bits represent the size position of the corresponding
  * key in the correct order.
  *
  *  _______________________
  * |...| 2 | 1 | 0 | size |
  * |___|___|___|___|______|
  *       4   4   4   4bit   --- 64bit
- * 
+ *
  * Note that the methods of Permutation DO NOT check the validity of the parameters(e.g. pos should be less than
  * max size)
  */
@@ -242,6 +246,7 @@ public:
   {
     return data_;
   }
+  TO_STRING_KV(K_(data));
 
 private:
   uint64_t data_;
@@ -313,6 +318,13 @@ public:
    * @return OB_SUCCESS on success, others on compare fail.
    */
   virtual int split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key) = 0;
+  DEFINE_VIRTUAL_TO_STRING({
+    J_KV(K_(version), K_(permutation));
+    J_COMMA();
+    J_NAME("kvs_");
+    J_COLON();
+    (void)databuff_print_obj_array(buf, buf_len, pos, kvs_, size());
+  })
 
 protected:
   /**
@@ -351,35 +363,13 @@ public:
     push_ = 0;
     pop_ = 0;
   }
-  OB_INLINE int push(const BtreeKV &data)
+  OB_INLINE void push(const BtreeKV &data)
   {
-    int ret = OB_SUCCESS;
-    if (OB_UNLIKELY(push_ >= pop_ + capacity)) {
-      ret = OB_ARRAY_OUT_OF_RANGE;
-    } else {
-      items_[idx(push_++)] = data;
-    }
-    return ret;
+    items_[idx(push_++)] = data;
   }
-  OB_INLINE int pop(BtreeKV &data)
+  OB_INLINE void pop(BtreeKV &data)
   {
-    int ret = OB_SUCCESS;
-    if (OB_UNLIKELY(pop_ >= push_)) {
-      ret = OB_ARRAY_OUT_OF_RANGE;
-    } else {
-      data = items_[idx(pop_++)];
-    }
-    return ret;
-  }
-  OB_INLINE int top(BtreeKV &data)
-  {
-    int ret = OB_SUCCESS;
-    if (OB_UNLIKELY(pop_ >= push_)) {
-      ret = OB_ARRAY_OUT_OF_RANGE;
-    } else {
-      data = items_[idx(pop_)];
-    }
-    return ret;
+    data = items_[idx(pop_++)];
   }
   OB_INLINE int64_t size() const
   {
@@ -389,9 +379,15 @@ public:
   {
     return push_ == pop_;
   }
-
+  DEFINE_TO_STRING({
+    J_KV(K_(push), K_(pop));
+    J_COMMA();
+    J_NAME("items_");
+    J_COLON();
+    (void)databuff_print_obj_array(buf, buf_len, pos, &items_[idx(pop_)], size());
+  })
 private:
-  int64_t idx(const int64_t x)
+  int64_t idx(const int64_t x) const
   {
     return x % capacity;
   }
@@ -469,6 +465,7 @@ public:
   {
     return 0;
   }
+  INHERIT_TO_STRING_KV("BtreeNode", BtreeNode, KP_(prev), KP_(next));
 
 private:
   LeafNode *prev_, *next_;
@@ -537,6 +534,7 @@ public:
   {
     return leftmost_child_;
   }
+  INHERIT_TO_STRING_KV("BtreeNode", BtreeNode, K_(leftmost_child), K_(level));
 
 private:
   BtreeVal leftmost_child_;
@@ -555,10 +553,12 @@ public:
   {}
   ~BtreeNodeAllocator()
   {}
-  int make_leaf(LeafNode *&leaf) {
+  int make_leaf(LeafNode *&leaf)
+  {
     return make_node_<LeafNode>(leaf);
   }
-  int make_internal(InternalNode *&internal) {
+  int make_internal(InternalNode *&internal)
+  {
     return make_node_<InternalNode>(internal);
   }
   OB_INLINE void free_node(BtreeNode *node)
@@ -600,42 +600,17 @@ public:
   {
     depth_ = 0;
   }
-  OB_INLINE int push(BtreeNode *node, Version version)
+  OB_INLINE void push(BtreeNode *node, Version version)
   {
-    int ret = OB_SUCCESS;
-    if (OB_UNLIKELY(depth_ >= MAX_DEPTH)) {
-      ret = OB_ARRAY_OUT_OF_RANGE;
-    } else {
-      path_[depth_].node_ = node;
-      path_[depth_].version_ = version;
-      depth_++;
-    }
-    return ret;
+    path_[depth_].node_ = node;
+    path_[depth_].version_ = version;
+    depth_++;
   }
-  OB_INLINE int pop(BtreeNode *&node, Version &version)
+  OB_INLINE void pop(BtreeNode *&node, Version &version)
   {
-    int ret = OB_SUCCESS;
-    if (OB_UNLIKELY(depth_ <= 0)) {
-      ret = OB_ARRAY_OUT_OF_RANGE;
-      node = nullptr;
-    } else {
-      depth_--;
-      node = path_[depth_].node_;
-      version = path_[depth_].version_;
-    }
-    return ret;
-  }
-  OB_INLINE int top(BtreeNode *&node, Version &version)
-  {
-    int ret = OB_SUCCESS;
-    if (OB_UNLIKELY(depth_ <= 0)) {
-      ret = OB_ARRAY_OUT_OF_RANGE;
-      node = nullptr;
-    } else {
-      node = path_[depth_ - 1].node_;
-      version = path_[depth_ - 1].version_;
-    }
-    return ret;
+    depth_--;
+    node = path_[depth_].node_;
+    version = path_[depth_].version_;
   }
   OB_INLINE bool empty() const
   {
@@ -645,24 +620,55 @@ public:
   {
     depth_ = std::max(depth, 0l);
   }
+  DEFINE_TO_STRING({
+    J_KV(K_(depth));
+    J_COMMA();
+    J_NAME("path_");
+    J_COLON();
+    (void)databuff_print_obj_array(buf, buf_len, pos, path_, depth_);
+  });
 
 private:
-  enum { MAX_DEPTH = 16 };
   struct Item {
     Item() : node_(nullptr)
     {}
     ~Item()
     {}
     BtreeNode *node_;
-    // int pos_;
     Version version_;
+    TO_STRING_KV(KP_(node), K_(version));
   };
   int64_t depth_;
-  Item path_[MAX_DEPTH];
+  Item path_[MAX_HEIGHT];
 };
 
 template <typename BtreeKey, typename BtreeVal>
 class BtreeIterator;
+
+class NodeLatchGuard {
+public:
+  NodeLatchGuard() : size_(0)
+  {}
+  ~NodeLatchGuard()
+  {
+    while (size_ > 0) {
+      pop();
+    }
+  }
+  void push(Version *v)
+  {
+    stack_[size_++] = v;
+    v->latch();
+  }
+  void pop()
+  {
+    stack_[--size_]->unlatch();
+  }
+
+private:
+  int size_;
+  Version *stack_[MAX_HEIGHT];
+};
 
 // TODO(shouluo): InternalNode's template
 template <typename BtreeKey, typename BtreeVal>
@@ -720,16 +726,20 @@ public:
     free_node(root_);
     return ret;
   }
+  TO_STRING_KV(KP_(root));
 
 private:
   int find_node(BtreeKey &key, uint8_t level, BtreeNode *&node, Version &version, Path &path);
-  int split(BtreeNode *&node, BtreeKey key, BtreeVal value, Path &path);
+  int split(BtreeNode *&node, BtreeKey key, BtreeVal value, Path &path, NodeLatchGuard &guard);
   int make_new_root(BtreeKey fence_key, BtreeNode *node, BtreeNode *new_node)
   {
     int ret = OB_SUCCESS;
     InternalNode *new_root;
-    // At this point we're already holding the old root's latch
-    if (OB_FAIL(node_allocator_.make_internal(new_root))) {
+    if (node->get_level() >= MAX_HEIGHT - 1) {
+      ret = OB_SIZE_OVERFLOW;
+      TRANS_LOG(ERROR, "tree is too high.", K(ret));
+    } else if (OB_FAIL(node_allocator_.make_internal(
+                   new_root))) {  // At this point we're already holding the old root's latch
       // empty
     } else {
       new_root->set_level(node->get_level() + 1);
@@ -786,6 +796,8 @@ public:
   {
     return is_backward_;
   }
+  TO_STRING_KV(K_(tree), K_(start_key), K_(end_key), K_(exclude_start_key), K_(exclude_end_key), K_(is_backward),
+      K_(leaf), K_(is_end), K_(kv_queue));
 
 private:
   int first_scan();

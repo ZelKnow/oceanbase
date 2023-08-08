@@ -58,18 +58,40 @@ struct BtreeKV {
  */
 class Version {
 public:
+  enum class Status {
+    NOT_CHANGED = 0,
+    INSERTED = 1,
+    SPLITTED = 2
+  };
+public:
   Version() : data_(0)
   {}
-  Version get_stable_snapshot()
+  Version(uint64_t data): data_(data)
+  {}
+  Version get_stable_snapshot() const
   {
     Version stable_version;
-    do {
-      stable_version.data_ = ATOMIC_LOAD_ACQ(&this->data_);
-    } while (stable_version.data_ & DIRTY_MASK);
+    stable_version.data_ = ATOMIC_LOAD_ACQ(&this->data_);
+    while (true) {
+      for(int i=0;i<MAX_TRY_COUNT && stable_version.data_ & DIRTY_MASK;i++) {
+        PAUSE();
+        stable_version.data_ = this->data_;
+      }
+      if(stable_version.data_ & DIRTY_MASK) {
+        sched_yield();
+      } else {
+        break;
+      }
+    }
     // As a reader, we need to ensure that all our read operations on the node
-    // occur after we take a snapshot of the version, so a acquire fence is needed.
+    // occur after we take a snapshot of the version, so a memory fence is needed.
+    // TODO(shouluo): Maybe an acquire fence is enough.
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     return stable_version;
+  }
+  OB_INLINE Version get_unstable_snapshot() const
+  {
+    return Version(data_);
   }
   OB_INLINE uint64_t get_vsplit() const
   {
@@ -103,33 +125,55 @@ public:
   {
     // We need to double check the version to make sure that all our reads on node
     // are consistent, and we need to ensure all our reads occur before our double check.
-    // So a acquire fence is needed here.
+    // So a memory fence is needed here.
+    // TODO(shouluo): Maybe an acquire fence is enough.
+    bool bool_ret = false;
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     if (is_splitting()) {
-      return true;
+      bool_ret = true;
+    } else if (get_vsplit() != snapshot_version.get_vsplit()) {
+      bool_ret = true;
     }
-    if (get_vsplit() != snapshot_version.get_vsplit()) {
-      return true;
-    }
-    return false;
+    return bool_ret;
   }
   bool has_inserted(Version &snapshot_version) const
   {
+    bool bool_ret = false;
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     if (is_inserting()) {
-      return true;
+      bool_ret = true;
+    } else if (get_vinsert() != snapshot_version.get_vinsert()) {
+      bool_ret = true;
     }
-    if (get_vinsert() != snapshot_version.get_vinsert()) {
-      return true;
+    return bool_ret;
+  }
+  Status has_changed(Version &snapshot_version) const {
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    Status s_ret = Status::NOT_CHANGED;
+    Version v = get_unstable_snapshot();
+    if (((v.data_ ^ snapshot_version.data_) & (~LATCH_BIT)) != 0) {
+      if (v.is_splitting() || v.get_vsplit() != snapshot_version.get_vsplit()) {
+        s_ret = Status::SPLITTED;
+      } else if (FALSE_IT(v = get_stable_snapshot())) {
+        // empty
+      } else if (v.get_vsplit() != snapshot_version.get_vsplit()) {
+        s_ret = Status::SPLITTED;
+      } else if (v.get_vinsert() != snapshot_version.get_vinsert()) {
+        s_ret = Status::INSERTED;
+        snapshot_version = v;
+      } else {
+        // empty
+      }
     }
-    return false;
+    return s_ret;
   }
   void set_inserting()
   {
     data_ = data_ | INSERTING_BIT;
     // As a writer, we need to make sure that all our write operations to the node happen after
     // we set the inserting/splitting bit, otherwise the reader may not find themselves
-    // having read an inconsistent state. So a release fence is needed.
+    // having read an inconsistent state. So a memory fence is needed.
+    // TODO(shouluo): Maybe a release fence is enough.
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
   }
   void set_splitting()
@@ -139,12 +183,19 @@ public:
   }
   void latch()
   {
+    uint64_t old_data = 0;
+    uint64_t new_data = 0;
     while (true) {
-      uint64_t old_data = data_ & (~LATCH_BIT);
-      uint64_t new_data = old_data | LATCH_BIT;
-      if (ATOMIC_BCAS(&data_, old_data, new_data)) {
-        return;
+      for(int i=0; i<MAX_TRY_COUNT; i++) {
+        uint64_t old_data = data_ & (~LATCH_BIT);
+        uint64_t new_data = old_data | LATCH_BIT;
+        if(ATOMIC_BCAS(&data_, old_data, new_data)) {
+          return;
+        } else {
+          PAUSE();
+        }
       }
+      sched_yield();
     }
     // We don't need to set fence here because CAS do that for us.
   }
@@ -165,7 +216,6 @@ public:
     data_ = 0;
   }
   TO_STRING_KV(K_(data));
-
 private:
   uint64_t data_;
   enum {
@@ -178,6 +228,9 @@ private:
     INSERT_MASK = ~(~0ULL << 5) << 56,
     ULATCH_MASK = ~(LATCH_BIT | INSERTING_BIT | SPLITTING_BIT),
     DIRTY_MASK = INSERTING_BIT | SPLITTING_BIT
+  };
+  enum {
+    MAX_TRY_COUNT = 100
   };
 };
 
@@ -265,7 +318,7 @@ private:
   using BtreeKV = BtreeKV<BtreeKey, BtreeVal>;
 
 public:
-  BtreeNode() : version_(), permutation_()
+  BtreeNode() : level_(0), version_(), permutation_()
   {}
   void reset()
   {
@@ -273,8 +326,6 @@ public:
     permutation_.reset();
   }
   void dump(FILE *file);
-  // The higher the node, the higher its level.
-  virtual uint8_t get_level() const = 0;
   OB_INLINE Version &get_version()
   {
     return version_;
@@ -300,6 +351,14 @@ public:
   {
     return kvs_[pos];
   }
+  OB_INLINE uint8_t get_level() const
+  {
+    return level_;
+  }
+  OB_INLINE void set_level(uint8_t level)
+  {
+    level_ = level;
+  }
   /**
    * @brief Insert \p key and \p val into the node. Doesn't check if there is enough space for insert.
    * @param key the key to be inserted.
@@ -319,7 +378,7 @@ public:
    */
   virtual int split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key) = 0;
   DEFINE_VIRTUAL_TO_STRING({
-    J_KV(K_(version), K_(permutation));
+    J_KV(K_(version), K_(permutation), K_(level));
     J_COMMA();
     J_NAME("kvs_");
     J_COLON();
@@ -339,6 +398,7 @@ protected:
    * @brief Copy [\p start, \p end] key-value pairs to \p other.
    */
   OB_INLINE void copy_to_(BtreeNode *other, int start, int end);
+  uint8_t level_;
   Version version_;
   Permutation permutation_;
   BtreeKV kvs_[max_size()];
@@ -461,10 +521,6 @@ public:
   {
     next_ = next;
   }
-  virtual uint8_t get_level() const override
-  {
-    return 0;
-  }
   INHERIT_TO_STRING_KV("BtreeNode", BtreeNode, KP_(prev), KP_(next));
 
 private:
@@ -522,23 +578,14 @@ public:
    * @return OB_SUCCESS on success, others on compare fail.
    */
   virtual int search(const BtreeKey key, BtreeVal &val) override;
-  virtual uint8_t get_level() const override
-  {
-    return level_;
-  }
-  OB_INLINE void set_level(int level)
-  {
-    level_ = level;
-  }
   OB_INLINE BtreeVal get_leftmost_child() const
   {
     return leftmost_child_;
   }
-  INHERIT_TO_STRING_KV("BtreeNode", BtreeNode, K_(leftmost_child), K_(level));
+  INHERIT_TO_STRING_KV("BtreeNode", BtreeNode, K_(leftmost_child));
 
 private:
   BtreeVal leftmost_child_;
-  uint8_t level_;
 };
 
 template <typename BtreeKey, typename BtreeVal>
@@ -730,16 +777,17 @@ public:
 
 private:
   int find_node(BtreeKey &key, uint8_t level, BtreeNode *&node, Version &version, Path &path);
-  int split(BtreeNode *&node, BtreeKey key, BtreeVal value, Path &path, NodeLatchGuard &guard);
+  int split(BtreeNode *&node, BtreeKey key, BtreeVal value, Path &path);
   int make_new_root(BtreeKey fence_key, BtreeNode *node, BtreeNode *new_node)
   {
     int ret = OB_SUCCESS;
     InternalNode *new_root;
+
+    // At this point we're already holding the old root's latch
     if (node->get_level() >= MAX_HEIGHT - 1) {
       ret = OB_SIZE_OVERFLOW;
-      TRANS_LOG(ERROR, "tree is too high.", K(ret));
-    } else if (OB_FAIL(node_allocator_.make_internal(
-                   new_root))) {  // At this point we're already holding the old root's latch
+      TRANS_LOG(ERROR, "Tree is too high.", K(ret));
+    } else if (OB_FAIL(node_allocator_.make_internal(new_root))) {
       // empty
     } else {
       new_root->set_level(node->get_level() + 1);

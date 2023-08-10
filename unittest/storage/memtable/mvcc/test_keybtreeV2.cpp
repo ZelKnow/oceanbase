@@ -35,25 +35,62 @@ using namespace oceanbase::keybtreeV2;
 
 class FakeAllocator : public ObIAllocator {
 public:
+  FakeAllocator() : remain_(0), is_limited_(false)
+  {}
   const char *attr = ObModIds::TEST;
   void *alloc(int64_t size) override
+  {
+    void *block = nullptr;
+    if (is_limited_) {
+      if (remain_ > 0) {
+        block = ob_malloc(size, attr);
+        --remain_;
+      }
+    } else {
+      block = ob_malloc(size, attr);
+    }
+    return block;
+  }
+  void *alloc_key(int64_t size)
   {
     return ob_malloc(size, attr);
   }
   void *alloc(const int64_t size, const ObMemAttr &attr) override
   {
+    void *block = nullptr;
     UNUSED(attr);
-    return alloc(size);
+    if (is_limited_) {
+      if (remain_ > 0) {
+        block = alloc(size);
+        --remain_;
+      }
+    } else {
+      block = alloc(size);
+    }
+    return block;
   }
   void free(void *ptr) override
   {
     ob_free(ptr);
+  }
+  void set_remain(int remain)
+  {
+    remain_ = remain;
+    is_limited_ = true;
+  }
+  void unset_limited()
+  {
+    is_limited_ = false;
   }
   static FakeAllocator *get_instance()
   {
     static FakeAllocator allocator;
     return &allocator;
   }
+
+private:
+  int remain_;
+  bool is_limited_;
 };
 
 class FakeKey {
@@ -85,7 +122,7 @@ public:
 FakeKey build_int_key(int64_t key)
 {
   auto alloc = FakeAllocator::get_instance();
-  void *block = alloc->alloc(sizeof(ObObj));
+  void *block = alloc->alloc_key(sizeof(ObObj));
   EXPECT_TRUE(OB_NOT_NULL(block));
   ObObj *obj = new (block) ObObj(key);
   return FakeKey(obj);
@@ -1034,6 +1071,92 @@ TEST(TestSequentialConsistency, smoke_test)
   }
 
   free_btree(btree);
+}
+
+void test_memory_not_enough(int max_nodes_cnt)
+{
+  constexpr uint64_t KEY_NUM = 6400000;
+  constexpr uint64_t THREAD_COUNT = 64;
+  constexpr uint64_t PER_THREAD_INSERT_COUNT = KEY_NUM / THREAD_COUNT;
+
+  FakeAllocator *allocator = FakeAllocator::get_instance();
+  BtreeNodeAllocator<FakeKey, int64_t> node_allocator(*allocator);
+  ObKeyBtree btree(node_allocator);
+
+  ASSERT_EQ(btree.init(), OB_SUCCESS);
+
+  std::thread threads[THREAD_COUNT];
+  std::vector<std::vector<int>> data(THREAD_COUNT, std::vector<int>(PER_THREAD_INSERT_COUNT));
+  for (int i = 0; i < THREAD_COUNT; i++) {
+    for (int j = 0; j < PER_THREAD_INSERT_COUNT; j++) {
+      data[i][j] = THREAD_COUNT * j + i;
+    }
+    std::random_shuffle(data[i].begin(), data[i].end());
+  }
+
+  allocator->set_remain(max_nodes_cnt);
+
+  int insert_progress[THREAD_COUNT];
+  // concurrent insert
+  for (int thread_id = 0; thread_id < THREAD_COUNT; thread_id++) {
+    threads[thread_id] = std::thread(
+        [&](int i) {
+          int ret = OB_SUCCESS;
+          insert_progress[i] = -1;
+          for (int j = 0; j < PER_THREAD_INSERT_COUNT && OB_SUCC(btree.insert(build_int_key(data[i][j]), data[i][j]));
+               j++) {
+            insert_progress[i] = j;
+          }
+          ASSERT_EQ(ret, OB_ALLOCATE_MEMORY_FAILED);
+        },
+        thread_id);
+  }
+
+  for (int thread_id = 0; thread_id < THREAD_COUNT; thread_id++) {
+    threads[thread_id].join();
+  }
+
+  allocator->unset_limited();
+
+  // evaluate the tree
+  FakeKey key = build_int_key(0);
+  int64_t val;
+  std::unordered_set<int64_t> results;
+  for (int i = 0; i < THREAD_COUNT; i++) {
+    for (int j = 0; j <= insert_progress[i]; j++) {
+      key.set_int(data[i][j]);
+      ASSERT_EQ(btree.search(key, val), OB_SUCCESS);
+      ASSERT_EQ(val, data[i][j]);
+      results.insert(val);
+    }
+  }
+  allocator->free(key.get_ptr());
+
+  FakeKey start_key = build_int_key(0);
+  FakeKey end_key = build_int_key(KEY_NUM);
+
+  BtreeIterator iter;
+  btree.set_key_range(iter, start_key, false, end_key, false);
+  int64_t last = -1;
+  while (iter.get_next(key, val) == OB_SUCCESS) {
+    ASSERT_GT(val, last);
+    last = val;
+    results.erase(val);
+  }
+
+  ASSERT_EQ(results.size(), 0);
+
+  free_btree(btree);
+  allocator->free(start_key.get_ptr());
+  allocator->free(end_key.get_ptr());
+}
+
+TEST(TestMemoryNotEnough, smoke_test)
+{
+  int nodes_cnt[20] = {1, 2, 3, 15, 16, 17, 18, 19, 20, 225, 227, 229, 230, 500, 1000, 2000, 3375, 5000, 8000, 10000};
+  for (int i = 0; i < 20; i++) {
+    test_memory_not_enough(nodes_cnt[i]);
+  }
 }
 
 }  // namespace unittest

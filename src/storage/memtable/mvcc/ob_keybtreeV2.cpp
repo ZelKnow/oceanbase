@@ -396,7 +396,7 @@ int InternalNode<BtreeKey, BtreeVal>::split_and_insert(
 
 template <typename BtreeKey, typename BtreeVal>
 int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
-    BtreeKey &key, uint8_t level, BtreeNode *&node, Version &version, Path &path)
+    BtreeKey key, uint8_t level, BtreeNode *&node, Version &version, Path &path)
 {
   int ret = OB_SUCCESS;
   BtreeNode *child = nullptr;
@@ -517,10 +517,67 @@ int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
   return ret;
 }
 
+template <typename BtreeKey, typename BtreeVal>
+int ObKeyBtree<BtreeKey, BtreeVal>::pre_alloc_nodes(BtreeKey key, Path &path, NodePairArray &pairs)
+{
+  int ret = OB_SUCCESS;
+  bool is_finished = false;
+  InternalNode *new_internal = nullptr;
+  BtreeNode *parent = nullptr;
+  Version version;
+
+  while (OB_SUCC(ret) && !is_finished && pairs.size() < MAX_HEIGHT) {
+    if (OB_UNLIKELY(path.empty())) {
+      if (OB_FAIL(node_allocator_.make_internal(new_internal))) {
+        TRANS_LOG(WARN, "Make new internal failed.", K(ret));
+      } else {
+        pairs.push(nullptr, new_internal);
+      }
+      is_finished = true;
+    } else {
+      path.pop(parent, version);
+      parent->get_version().latch();
+    }
+    while (OB_SUCC(ret) && !is_finished && parent->get_version().has_splitted(version)) {
+      // at this point parent is no longer the parent of node, so we need to find the real parent
+      parent->get_version().unlatch();
+      if (OB_SUCC(find_node(key, parent->get_level(), parent, version, path))) {
+        parent->get_version().latch();
+      }
+    }
+    if (OB_FAIL(ret) || is_finished) {
+      // empty
+    } else if (OB_LIKELY(!parent->is_full())) {
+      pairs.push(parent, nullptr);
+      is_finished = true;
+    } else if (OB_FAIL(node_allocator_.make_internal(new_internal))) {
+      parent->get_version().unlatch();
+      TRANS_LOG(WARN, "Make new internal failed.", K(ret));
+    } else {
+      new_internal->get_version().latch();
+      pairs.push(parent, new_internal);
+    }
+  }
+
+  if (OB_UNLIKELY(OB_SUCCESS == ret && !is_finished)) {
+    ret = OB_SIZE_OVERFLOW;
+    TRANS_LOG(ERROR, "Tree is too high.", K(ret));
+  }
+
+  if (OB_FAIL(ret)) {
+    while (!pairs.empty()) {
+      pairs.pop(parent, new_internal);
+      node_allocator_.free_node(new_internal);
+      parent->get_version().unlatch();
+    }
+  }
+
+  return ret;
+}
+
 // TODO(shouluo): format, rollback
 template <typename BtreeKey, typename BtreeVal>
-int ObKeyBtree<BtreeKey, BtreeVal>::split(
-    BtreeNode *&node, BtreeKey key, BtreeVal value, Path &path)
+int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeVal value, Path &path)
 {
   int ret = OB_SUCCESS;
   int is_finished = false;
@@ -530,11 +587,16 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(
   BtreeNode *parent = nullptr;
   InternalNode *new_internal = nullptr;
   BtreeKey fence_key;
-  Version parent_version;
+  NodePairArray pairs;
 
   leaf->get_version().set_splitting();
 
-  if (OB_SUCC(node_allocator_.make_leaf(new_leaf))) {
+  if (OB_FAIL(node_allocator_.make_leaf(new_leaf))) {
+    leaf->get_version().unlatch();
+  } else if (OB_FAIL(pre_alloc_nodes(key, path, pairs))) {
+    node_allocator_.free_node(new_leaf);
+    leaf->get_version().unlatch();
+  } else {
     new_node = new_leaf;
     new_node->get_version().latch();
     new_node->get_version().set_splitting();
@@ -554,67 +616,47 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(
     TRANS_LOG(ERROR, "Split node failed.", K(ret), K(key), KPC(node), KPC(new_node));
   }
 
-  while (OB_SUCC(ret) && !is_finished) {
+  for (int i = 0; i < pairs.size() - 1 && OB_SUCC(ret); i++) {
     key = fence_key;
+    pairs.get(i, parent, new_internal);
 
-    if (OB_UNLIKELY(path.empty())) {  // need to create new root
-      if (OB_FAIL(make_new_root(key, node, new_node))) {
-        TRANS_LOG(ERROR, "Make new root failed.", K(ret));
-      } else {
-        is_finished = true;
-      }
-      node->get_version().unlatch();
-      new_node->get_version().unlatch();
-    } else {
-      path.pop(parent, parent_version);
-      parent->get_version().latch();
-    }
+    // chained split
+    parent->get_version().set_splitting();
 
-    while (OB_SUCC(ret) && !is_finished && parent->get_version().has_splitted(parent_version)) {
-      // at this point parent is no longer the parent of node, so we need to find the real parent
-      parent->get_version().unlatch();
-      if (OB_SUCC(find_node(key, parent->get_level(), parent, parent_version, path))) {
-        parent->get_version().latch();
-      }
-    }
+    // At this point the above query can't come down so node's splitting bit can be safely unset.
+    node->get_version().unlatch();
 
-    if (OB_FAIL(ret) || is_finished) {
-      // empty
-    } else if (OB_LIKELY(!parent->is_full())) {
-      // insert directly
-      parent->get_version().set_inserting();
-      ret = parent->insert(key, reinterpret_cast<BtreeVal>(new_node));
-      node->get_version().unlatch();
-      new_node->get_version().unlatch();
-      parent->get_version().unlatch();
-      is_finished = true;
-    } else {
-      // chained split
-      parent->get_version().set_splitting();
+    new_internal->get_version().set_splitting();
+    new_internal->set_level(parent->get_level());
 
-      // At this point the above query can't come down so node's splitting bit can be safely unset.
-      node->get_version().unlatch();
-
-      // prepare new node
-      if (OB_SUCC(node_allocator_.make_internal(new_internal))) {
-        new_internal->get_version().latch();
-        new_internal->get_version().set_splitting();
-        new_internal->set_level(parent->get_level());
-      }
-
-      if (OB_FAIL(ret)) {
-        // empty
-      } else if (OB_FAIL(
-                     parent->split_and_insert(new_internal, key, reinterpret_cast<BtreeVal>(new_node), fence_key))) {
-        TRANS_LOG(ERROR, "Split node failed.", K(ret), K(key), KPC(parent), KPC(new_internal));
-      }
-    }
-    if (OB_SUCC(ret) && !is_finished) {  // going up!
+    if (OB_SUCC(parent->split_and_insert(
+            new_internal, key, reinterpret_cast<BtreeVal>(new_node), fence_key))) {  // going up!
       new_node->get_version().unlatch();
       node = parent;
       new_node = new_internal;
     }
   }
+
+  if (OB_FAIL(ret)) {
+
+  } else if (FALSE_IT(pairs.pop(parent, new_internal))) {
+
+  } else if (OB_LIKELY(new_internal == nullptr)) {
+    parent->get_version().set_inserting();
+    ret = parent->insert(fence_key, reinterpret_cast<BtreeVal>(new_node));
+    parent->get_version().unlatch();
+    node->get_version().unlatch();
+    new_node->get_version().unlatch();
+  } else {
+    new_internal->set_leftmost_child(reinterpret_cast<BtreeVal>(node));
+    new_internal->set_level(node->get_level() + 1);
+    ret = new_internal->insert(fence_key, reinterpret_cast<BtreeVal>(new_node));
+    root_ = new_internal;
+    new_internal->get_version().unlatch();
+    node->get_version().unlatch();
+    new_node->get_version().unlatch();
+  }
+
   return ret;
 }
 

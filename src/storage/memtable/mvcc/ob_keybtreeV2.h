@@ -58,26 +58,23 @@ struct BtreeKV {
  */
 class Version {
 public:
-  enum class Status {
-    NOT_CHANGED = 0,
-    INSERTED = 1,
-    SPLITTED = 2
-  };
+  enum class Status { NOT_CHANGED = 0, INSERTED = 1, SPLITTED = 2 };
+
 public:
   Version() : data_(0)
   {}
-  Version(uint64_t data): data_(data)
+  Version(uint64_t data) : data_(data)
   {}
   Version get_stable_snapshot() const
   {
     Version stable_version;
     stable_version.data_ = ATOMIC_LOAD_ACQ(&this->data_);
     while (true) {
-      for(int i=0;i<MAX_TRY_COUNT && stable_version.data_ & DIRTY_MASK;i++) {
+      for (int i = 0; i < MAX_TRY_COUNT && stable_version.data_ & DIRTY_MASK; i++) {
         PAUSE();
         stable_version.data_ = this->data_;
       }
-      if(stable_version.data_ & DIRTY_MASK) {
+      if (stable_version.data_ & DIRTY_MASK) {
         sched_yield();
       } else {
         break;
@@ -147,7 +144,8 @@ public:
     }
     return bool_ret;
   }
-  Status has_changed(Version &snapshot_version) const {
+  Status has_changed(Version &snapshot_version) const
+  {
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     Status s_ret = Status::NOT_CHANGED;
     Version v = get_unstable_snapshot();
@@ -186,10 +184,10 @@ public:
     uint64_t old_data = 0;
     uint64_t new_data = 0;
     while (true) {
-      for(int i=0; i<MAX_TRY_COUNT; i++) {
+      for (int i = 0; i < MAX_TRY_COUNT; i++) {
         uint64_t old_data = data_ & (~LATCH_BIT);
         uint64_t new_data = old_data | LATCH_BIT;
-        if(ATOMIC_BCAS(&data_, old_data, new_data)) {
+        if (ATOMIC_BCAS(&data_, old_data, new_data)) {
           return;
         } else {
           PAUSE();
@@ -216,6 +214,7 @@ public:
     data_ = 0;
   }
   TO_STRING_KV(K_(data));
+
 private:
   uint64_t data_;
   enum {
@@ -229,9 +228,7 @@ private:
     ULATCH_MASK = ~(LATCH_BIT | INSERTING_BIT | SPLITTING_BIT),
     DIRTY_MASK = INSERTING_BIT | SPLITTING_BIT
   };
-  enum {
-    MAX_TRY_COUNT = 100
-  };
+  enum { MAX_TRY_COUNT = 100 };
 };
 
 /**
@@ -633,60 +630,62 @@ private:
   common::ObIAllocator &allocator_;
 };
 
-template <typename BtreeKey, typename BtreeVal>
-class Path {
-private:
-  using BtreeNode = BtreeNode<BtreeKey, BtreeVal>;
-
+template <typename T1, typename T2>
+class BtreeVector {
 public:
-  Path() : depth_(0)
+  BtreeVector() : size_(0)
   {}
-  ~Path()
+  ~BtreeVector()
   {}
   void reset()
   {
-    depth_ = 0;
+    size_ = 0;
   }
-  OB_INLINE void push(BtreeNode *node, Version version)
+  OB_INLINE void push(T1 item1, T2 item2)
   {
-    path_[depth_].node_ = node;
-    path_[depth_].version_ = version;
-    depth_++;
+    data_[size_].item1_ = item1;
+    data_[size_].item2_ = item2;
+    ++size_;
   }
-  OB_INLINE void pop(BtreeNode *&node, Version &version)
+  OB_INLINE void pop(T1 &item1, T2 &item2)
   {
-    depth_--;
-    node = path_[depth_].node_;
-    version = path_[depth_].version_;
+    --size_;
+    item1 = data_[size_].item1_;
+    item2 = data_[size_].item2_;
   }
   OB_INLINE bool empty() const
   {
-    return 0 == depth_;
+    return 0 == size_;
   }
-  OB_INLINE void resize(int64_t depth)
+  OB_INLINE int size() const
   {
-    depth_ = std::max(depth, 0l);
+    return size_;
+  }
+  OB_INLINE void resize(int size)
+  {
+    size_ = std::max(size, 0);
+  }
+  void get(int idx, T1 &item1, T2 &item2)
+  {
+    item1 = data_[idx].item1_;
+    item2 = data_[idx].item2_;
   }
   DEFINE_TO_STRING({
-    J_KV(K_(depth));
+    J_KV(K_(size));
     J_COMMA();
-    J_NAME("path_");
+    J_NAME("data_");
     J_COLON();
-    (void)databuff_print_obj_array(buf, buf_len, pos, path_, depth_);
+    (void)databuff_print_obj_array(buf, buf_len, pos, data_, size_);
   });
 
 private:
-  struct Item {
-    Item() : node_(nullptr)
-    {}
-    ~Item()
-    {}
-    BtreeNode *node_;
-    Version version_;
-    TO_STRING_KV(KP_(node), K_(version));
+  struct Pair {
+    T1 item1_;
+    T2 item2_;
+    TO_STRING_KV(K_(item1), K_(item2));
   };
-  int64_t depth_;
-  Item path_[MAX_HEIGHT];
+  int size_;
+  Pair data_[MAX_HEIGHT];
 };
 
 template <typename BtreeKey, typename BtreeVal>
@@ -725,7 +724,8 @@ private:
   using BtreeNode = BtreeNode<BtreeKey, BtreeVal>;
   using LeafNode = LeafNode<BtreeKey, BtreeVal>;
   using InternalNode = InternalNode<BtreeKey, BtreeVal>;
-  using Path = Path<BtreeKey, BtreeVal>;
+  using Path = BtreeVector<BtreeNode *, Version>;
+  using NodePairArray = BtreeVector<BtreeNode *, InternalNode *>;
   friend class BtreeIterator<BtreeKey, BtreeVal>;
 
 public:
@@ -776,27 +776,9 @@ public:
   TO_STRING_KV(KP_(root));
 
 private:
-  int find_node(BtreeKey &key, uint8_t level, BtreeNode *&node, Version &version, Path &path);
+  int find_node(BtreeKey key, uint8_t level, BtreeNode *&node, Version &version, Path &path);
   int split(BtreeNode *&node, BtreeKey key, BtreeVal value, Path &path);
-  int make_new_root(BtreeKey fence_key, BtreeNode *node, BtreeNode *new_node)
-  {
-    int ret = OB_SUCCESS;
-    InternalNode *new_root;
-
-    // At this point we're already holding the old root's latch
-    if (node->get_level() >= MAX_HEIGHT - 1) {
-      ret = OB_SIZE_OVERFLOW;
-      TRANS_LOG(ERROR, "Tree is too high.", K(ret));
-    } else if (OB_FAIL(node_allocator_.make_internal(new_root))) {
-      // empty
-    } else {
-      new_root->set_level(node->get_level() + 1);
-      new_root->set_leftmost_child(reinterpret_cast<BtreeVal>(node));
-      new_root->insert(fence_key, reinterpret_cast<BtreeVal>(new_node));
-      root_ = new_root;
-    }
-    return ret;
-  }
+  int pre_alloc_nodes(BtreeKey key, Path &path, NodePairArray &stack);
   OB_INLINE BtreeNode *get_root() const
   {
     return root_;
@@ -822,7 +804,7 @@ private:
   using LeafNode = LeafNode<BtreeKey, BtreeVal>;
   using BtreeNode = BtreeNode<BtreeKey, BtreeVal>;
   using ObKeyBtree = ObKeyBtree<BtreeKey, BtreeVal>;
-  using Path = Path<BtreeKey, BtreeVal>;
+  using Path = BtreeVector<BtreeNode *, Version>;
   using BtreeKV = BtreeKV<BtreeKey, BtreeVal>;
   using KVQueue = KVQueue<BtreeKey, BtreeVal>;
 

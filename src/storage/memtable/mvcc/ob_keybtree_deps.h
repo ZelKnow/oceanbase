@@ -123,7 +123,7 @@ public:
   // unsafe_insert will be unsafe under concurrent inserts, so use it carefully
   OB_INLINE void unsafe_insert(int index, uint8_t value) { data_ = cal_index_(*this, index, value); }
   OB_INLINE void inc_count(int16_t s) { count_ += s; }
-  OB_INLINE int8_t size() const { return (int16_t)(data_) & ((1 << LEN_OF_COUNTER) - 1); }
+  OB_INLINE int8_t size() const { return ATOMIC_LOAD((int16_t*)(&data_)) & ((1 << LEN_OF_COUNTER) - 1); }
   // free_insert uses cas to guarantee safety under concurrent inserts
   OB_INLINE bool free_insert(int index, uint8_t value)
   {
@@ -223,11 +223,11 @@ public:
   }
   OB_INLINE BtreeVal get_val(int pos, MultibitSet *index = nullptr) const
   {
-    return kvs_[get_real_pos(pos, index)].val_;
+    return ATOMIC_LOAD(&kvs_[get_real_pos(pos, index)].val_);
   }
   OB_INLINE void set_val(int pos, BtreeVal val, MultibitSet *index = nullptr)
   {
-    kvs_[get_real_pos(pos, index)].val_ = val;
+    ATOMIC_STORE(&kvs_[get_real_pos(pos, index)].val_, val);
   }
   int make_new_root(BtreeKey key1, BtreeNode *node_1, BtreeKey key2, BtreeNode *node_2, int16_t level);
   bool is_overflow(const int64_t delta, MultibitSet *index = nullptr) { return size(index) + delta > NODE_KEY_COUNT; }

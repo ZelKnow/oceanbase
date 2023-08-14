@@ -150,18 +150,15 @@ public:
     Status s_ret = Status::NOT_CHANGED;
     Version v = get_unstable_snapshot();
     if (((v.data_ ^ snapshot_version.data_) & (~LATCH_BIT)) != 0) {
-      if (v.is_splitting() || v.get_vsplit() != snapshot_version.get_vsplit()) {
-        s_ret = Status::SPLITTED;
-      } else if (FALSE_IT(v = get_stable_snapshot())) {
-        // empty
-      } else if (v.get_vsplit() != snapshot_version.get_vsplit()) {
+      v = get_stable_snapshot();
+      if (v.get_vsplit() != snapshot_version.get_vsplit()) {
         s_ret = Status::SPLITTED;
       } else if (v.get_vinsert() != snapshot_version.get_vinsert()) {
         s_ret = Status::INSERTED;
-        snapshot_version = v;
       } else {
         // empty
       }
+      snapshot_version = v;
     }
     return s_ret;
   }
@@ -313,9 +310,9 @@ template <typename BtreeKey, typename BtreeVal>
 class BtreeNode {
 private:
   using BtreeKV = BtreeKV<BtreeKey, BtreeVal>;
-
+  using cacheline_t = struct { char x[64]; };
 public:
-  BtreeNode() : level_(0), version_(), permutation_()
+  BtreeNode() : level_(0), version_(), permutation_(), next_(nullptr)
   {}
   void reset()
   {
@@ -355,6 +352,31 @@ public:
   OB_INLINE void set_level(uint8_t level)
   {
     level_ = level;
+  }
+  OB_INLINE BtreeNode *get_next()
+  {
+    return next_;
+  }
+  OB_INLINE void set_next(BtreeNode *next)
+  {
+    next_ = next;
+  }
+  OB_INLINE BtreeKey &get_highkey()
+  {
+    return highkey_;
+  }
+  OB_INLINE void set_highkey(BtreeKey highkey)
+  {
+    highkey_ = highkey;
+  }
+  OB_INLINE void prefetch()
+  {
+    #ifdef PREFETCH
+    for(int i=0;i<5;i++)
+    {
+      __builtin_prefetch(this+i*64, 0, 3);
+    }
+    #endif
   }
   /**
    * @brief Insert \p key and \p val into the node. Doesn't check if there is enough space for insert.
@@ -398,6 +420,8 @@ protected:
   uint8_t level_;
   Version version_;
   Permutation permutation_;
+  BtreeNode *next_;
+  BtreeKey highkey_;
   BtreeKV kvs_[max_size()];
   DISALLOW_COPY_AND_ASSIGN(BtreeNode);
 };
@@ -461,7 +485,7 @@ private:
   using BtreeKV = BtreeKV<BtreeKey, BtreeVal>;
 
 public:
-  LeafNode() : BtreeNode(), prev_(nullptr), next_(nullptr)
+  LeafNode() : BtreeNode(), prev_(nullptr)
   {}
   /**
    * @brief Scan the leaf node, push the key-value pair in the interval [ \p start_key, \p end_key ]
@@ -506,17 +530,9 @@ public:
   {
     return prev_;
   }
-  OB_INLINE LeafNode *&get_next()
-  {
-    return next_;
-  }
   OB_INLINE void set_prev(LeafNode *prev)
   {
     prev_ = prev;
-  }
-  OB_INLINE void set_next(LeafNode *next)
-  {
-    next_ = next;
   }
   INHERIT_TO_STRING_KV("BtreeNode", BtreeNode, KP_(prev), KP_(next));
 
@@ -563,6 +579,8 @@ private:
   using BtreeKV = BtreeKV<BtreeKey, BtreeVal>;
 
 public:
+  InternalNode(): BtreeNode()
+  {}
   OB_INLINE void set_leftmost_child(BtreeVal leftmost_child)
   {
     leftmost_child_ = leftmost_child;
@@ -756,6 +774,7 @@ public:
    * @return OB_SUCCESS on success, OB_ALLOCATE_MEMORY_FAILED on allocation fail, others on compare fail.
    */
   int insert(BtreeKey key, BtreeVal val);
+  int insertV2(BtreeKey key, BtreeVal val);
   void dump(FILE *file)
   {
     root_->dump(file);

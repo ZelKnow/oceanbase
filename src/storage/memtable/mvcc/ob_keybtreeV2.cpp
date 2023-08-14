@@ -29,7 +29,7 @@ void BtreeNode<BtreeKey, BtreeVal>::dump(FILE *file)
   } else {
     using InternalNode = InternalNode<BtreeKey, BtreeVal>;
     InternalNode *internal = reinterpret_cast<InternalNode *>(this);
-    fprintf(file, "%p InternalNode\n", this);
+    fprintf(file, "%p InternalNode: next: %p, highkey: %s\n", this, internal->get_next(), to_cstring(this->get_highkey().get_ptr()));
     fprintf(file, "%p,", reinterpret_cast<BtreeNode *>(internal->get_leftmost_child()));
     for (int i = 0; i < size(); i++) {
       fprintf(file, "%s,", to_cstring(this->get_kv(i, permutation_).key_.get_ptr()));
@@ -155,6 +155,16 @@ int LeafNode<BtreeKey, BtreeVal>::split_and_insert(BtreeNode *new_node, BtreeKey
   new_leaf->permutation_.set_size(n / 2);
 
   fence_key = new_leaf->get_kv(0, new_leaf->permutation_).key_;
+  new_node->set_highkey(this->get_highkey());
+  this->set_highkey(fence_key);
+
+  // Adjust the sibling pointer of the leaf node
+  new_leaf->set_prev(this);
+  if (OB_NOT_NULL(this->get_next())) {
+    reinterpret_cast<LeafNode*>(this->get_next())->set_prev(new_leaf);
+    new_leaf->set_next(this->get_next());
+  }
+  this->set_next(new_leaf);
 
   // insert the key-value
   if (OB_FAIL(fence_key.compare(key, cmp))) {
@@ -382,6 +392,13 @@ int InternalNode<BtreeKey, BtreeVal>::split_and_insert(
   // Set the size of new leaf to n/2, retain only the left half (originally the right half of this node).
   new_internal->permutation_.set_size((n - 1) / 2);
 
+  new_node->set_highkey(this->get_highkey());
+  this->set_highkey(fence_key);
+
+  new_internal->set_next(this->get_next());
+  this->set_next(new_internal);
+
+
   // insert the key-value
   if (OB_FAIL(fence_key.compare(key, cmp))) {
     TRANS_LOG(ERROR, "Compare failed.", K(ret), K(fence_key), K(key));
@@ -394,6 +411,78 @@ int InternalNode<BtreeKey, BtreeVal>::split_and_insert(
   return ret;
 }
 
+#define BLINKTREE
+
+#ifdef BLINKTREE
+template <typename BtreeKey, typename BtreeVal>
+int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
+    BtreeKey key, uint8_t level, BtreeNode *&node, Version &version, Path &path)
+{
+  int ret = OB_SUCCESS;
+  BtreeNode *child = nullptr;
+  BtreeNode *next = nullptr;
+  Version child_version;
+  Version node_current_version;
+  Version next_version;
+  Version::Status node_status = Version::Status::NOT_CHANGED;
+  BtreeVal val;
+  bool is_found = false;
+  int cmp = 0;
+
+  path.reset();
+
+  // First, we need to get root and its stable version. And we need to double check the
+  // root to make sure that the root has not changed during this period.
+  do {
+      node = get_root();
+      version = node->get_version().get_stable_snapshot();
+  } while (node != get_root());
+
+  while (OB_SUCC(ret) && node->get_level() > level) {
+    if (OB_FAIL(node->search(key, val))) {
+      TRANS_LOG(ERROR, "Node search failed.", K(ret), K(key), KPC(node));
+    } else {
+      child = reinterpret_cast<BtreeNode *>(val);
+      child_version = child->get_version().get_stable_snapshot();
+      node_status = node->get_version().has_changed(version);
+      if (node_status == Version::Status::SPLITTED) {
+        // Node has been splitted while we were searching for the child. In this case, the key we're looking for
+        // may not be on the node anymore, so we need to retry from the root.
+        is_found = false;
+        while(OB_SUCC(ret) && !is_found) {
+          if(OB_ISNULL(node->get_next())) {
+            is_found = true;
+          } else if(OB_FAIL(node->get_highkey().compare(key, cmp))) {
+            TRANS_LOG(ERROR, "Compare failed.", K(ret), K(node->get_highkey()), K(key));
+          } else if (cmp > 0) {
+            is_found = true;
+          } else {
+            next = node->get_next();
+            next_version = next->get_version().get_stable_snapshot();
+            if (node->get_version().has_splitted(version)) {
+              // empty
+            } else {
+              node = next;
+              version = next_version;
+            }
+          }
+        }
+        continue;
+      } else if (node_status == Version::Status::INSERTED) {
+        // Node has been inserted while we were searching for the child. In this case, the key we're looking for
+        // is still on the node, so we can just retry from the current node.
+        // Remember we should update the snapshoted version of the node. We have done that in has_changed() function.
+        continue;
+      }
+      path.push(node, version);
+      node = child;
+      version = child_version;
+    }
+  }
+  return ret;
+}
+
+#else
 template <typename BtreeKey, typename BtreeVal>
 int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
     BtreeKey key, uint8_t level, BtreeNode *&node, Version &version, Path &path)
@@ -439,6 +528,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
   } while (OB_SUCC(ret) && node->get_level() > level);
   return ret;
 }
+#endif
 
 template <typename BtreeKey, typename BtreeVal>
 int ObKeyBtree<BtreeKey, BtreeVal>::search(BtreeKey key, BtreeVal &val)
@@ -467,6 +557,8 @@ int ObKeyBtree<BtreeKey, BtreeVal>::search(BtreeKey key, BtreeVal &val)
   return ret;
 }
 
+
+#ifndef BLINKTREE
 // TODO(shouluo): Latch guard
 template <typename BtreeKey, typename BtreeVal>
 int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
@@ -517,6 +609,143 @@ int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
   return ret;
 }
 
+#else
+
+template <typename BtreeKey, typename BtreeVal>
+int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
+{
+  int ret = OB_SUCCESS;
+  BtreeNode *leaf;
+  BtreeNode *next;
+  Version version;
+  Path path;
+  bool is_found = false;
+  int cmp = 0;
+
+  if (OB_UNLIKELY(get_root()->get_level() >= MAX_HEIGHT)) {
+    ret = OB_SIZE_OVERFLOW;
+    TRANS_LOG(WARN, "Tree is too high.", K(ret), K(get_root()->get_level()));
+  } else if (OB_FAIL(find_node(key, 0, leaf, version, path))) {
+    TRANS_LOG(ERROR, "Find leaf node failed.", K(ret), K(key));
+  } else {
+    // Before modifying the leaf, we need to get the latch.
+    leaf->get_version().latch();
+    if (OB_UNLIKELY(leaf->get_version().has_splitted(version))) {
+      // Leaf has splitted, so we need to find the leaf again.
+      while(OB_SUCC(ret) && !is_found) {
+        if(OB_ISNULL(leaf->get_next())) {
+          is_found = true;
+        } else if(OB_FAIL(leaf->get_highkey().compare(key, cmp))) {
+          TRANS_LOG(ERROR, "Compare failed.", K(ret), K(leaf->get_highkey()), K(key));
+        } else if (cmp > 0) {
+          is_found = true;
+        } else {
+          next = leaf->get_next();
+          next->get_version().latch();
+          leaf->get_version().unlatch();
+          leaf = next;
+        }
+      }
+    }
+  }
+
+  if (OB_FAIL(ret)) {
+    // empty
+  } else if (OB_LIKELY(!leaf->is_full())) {  // leaf is not full, insert directly
+    if (OB_FAIL(leaf->insert(key, val))) {
+      TRANS_LOG(ERROR, "Insert key into leaf failed.", K(ret), K(key), K(val), KPC(leaf));
+    }
+    leaf->get_version().unlatch();
+  } else if (OB_FAIL(split(leaf, key, val, path))) {  // leaf is full, do split
+    TRANS_LOG(ERROR, "Split the leaf failed.", K(ret), K(key), K(val), KPC(leaf));
+  } else {
+    // empty
+  }
+
+  if (OB_SUCC(ret)) {
+    size_.inc(1);
+  }
+
+  return ret;
+}
+#endif
+
+#ifdef BLINKTREE
+
+template <typename BtreeKey, typename BtreeVal>
+int ObKeyBtree<BtreeKey, BtreeVal>::pre_alloc_nodes(BtreeKey key, Path &path, NodePairArray &pairs)
+{
+  int ret = OB_SUCCESS;
+  bool is_finished = false;
+  bool is_found = false;
+  InternalNode *new_internal = nullptr;
+  BtreeNode *parent = nullptr;
+  BtreeNode *next;
+  Version version;
+  int cmp = 0;
+
+  while (OB_SUCC(ret) && !is_finished && pairs.size() < MAX_HEIGHT) {
+    is_found = false;
+    if (OB_UNLIKELY(path.empty())) {
+      if (OB_FAIL(node_allocator_.make_internal(new_internal))) {
+        TRANS_LOG(WARN, "Make new internal failed.", K(ret));
+      } else {
+        pairs.push(nullptr, new_internal);
+      }
+      is_finished = true;
+    } else {
+      path.pop(parent, version);
+      parent->get_version().latch();
+      if (parent->get_version().has_splitted(version)) {
+        // Node has splitted, so we need to find the node again.
+        while(OB_SUCC(ret) && !is_found) {
+          if(OB_ISNULL(parent->get_next())) {
+            is_found = true;
+          } else if(OB_FAIL(parent->get_highkey().compare(key, cmp))) {
+            TRANS_LOG(ERROR, "Compare failed.", K(ret), K(parent->get_highkey()), K(key));
+          } else if (cmp > 0) {
+            is_found = true;
+          } else {
+            next = parent->get_next();
+            next->get_version().latch();
+            parent->get_version().unlatch();
+            parent = next;
+          }
+        }
+      }
+    }
+
+    if (OB_FAIL(ret) || is_finished) {
+      // empty
+    } else if (OB_LIKELY(!parent->is_full())) {
+      pairs.push(parent, nullptr);
+      is_finished = true;
+    } else if (OB_FAIL(node_allocator_.make_internal(new_internal))) {
+      parent->get_version().unlatch();
+      TRANS_LOG(WARN, "Make new internal failed.", K(ret));
+    } else {
+      new_internal->get_version().latch();
+      pairs.push(parent, new_internal);
+    }
+  }
+
+  if (OB_UNLIKELY(OB_SUCCESS == ret && !is_finished)) {
+    ret = OB_SIZE_OVERFLOW;
+    TRANS_LOG(ERROR, "Tree is too high.", K(ret));
+  }
+
+  if (OB_FAIL(ret)) {
+    while (!pairs.empty()) {
+      pairs.pop(parent, new_internal);
+      node_allocator_.free_node(new_internal);
+      parent->get_version().unlatch();
+    }
+  }
+
+  return ret;
+}
+
+#else
 template <typename BtreeKey, typename BtreeVal>
 int ObKeyBtree<BtreeKey, BtreeVal>::pre_alloc_nodes(BtreeKey key, Path &path, NodePairArray &pairs)
 {
@@ -574,6 +803,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::pre_alloc_nodes(BtreeKey key, Path &path, No
 
   return ret;
 }
+#endif
 
 // TODO(shouluo): format, rollback
 template <typename BtreeKey, typename BtreeVal>
@@ -600,14 +830,6 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
     new_node = new_leaf;
     new_node->get_version().latch();
     new_node->get_version().set_splitting();
-
-    // Adjust the sibling pointer of the leaf node
-    new_leaf->set_prev(leaf);
-    if (OB_NOT_NULL(leaf->get_next())) {
-      leaf->get_next()->set_prev(new_leaf);
-      new_leaf->set_next(leaf->get_next());
-    }
-    leaf->set_next(new_leaf);
   }
 
   if (OB_FAIL(ret)) {
@@ -725,7 +947,7 @@ int BtreeIterator<BtreeKey, BtreeVal>::first_scan()
                    start_key_, end_key_, exclude_start_key_, exclude_end_key_, is_backward_, kv_queue_, is_end_))) {
       TRANS_LOG(ERROR, "Scan failed.", K(ret), K(*this));
     } else {
-      next_leaf = leaf_->get_next();
+      next_leaf = reinterpret_cast<LeafNode*>(leaf_->get_next());
       if (leaf_->get_version().has_splitted(version)) {
         // retry on leaf splitted
       } else {
@@ -767,7 +989,7 @@ int BtreeIterator<BtreeKey, BtreeVal>::scan_forward()
     if (OB_FAIL(leaf_->scan(end_key_, exclude_end_key_, false, kv_queue_, is_end_))) {
       TRANS_LOG(ERROR, "Scan failed.", K(ret), K(end_key_), K(exclude_end_key_), KPC_(leaf));
     } else {
-      next_leaf = leaf_->get_next();
+      next_leaf = reinterpret_cast<LeafNode*>(leaf_->get_next());
       Version leaf_new_version = leaf_->get_version().get_stable_snapshot();
       if (leaf_new_version.has_splitted(version)) {
         kv_queue_.reset();

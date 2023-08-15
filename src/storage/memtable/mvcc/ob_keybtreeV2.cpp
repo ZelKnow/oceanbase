@@ -55,6 +55,8 @@ int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation
 
   while (OB_SUCC(ret) && l < r) {
     mid = (l + r + 1) / 2;
+    __builtin_prefetch(get_kv((mid+r+1)/2, snapshot_permutation).key_.get_ptr());
+    __builtin_prefetch(get_kv((mid+l)/2, snapshot_permutation).key_.get_ptr());
     mid_key = get_kv(mid, snapshot_permutation).key_;
     if (OB_FAIL(mid_key.compare(key, cmp))) {
       TRANS_LOG(ERROR, "Compare error.", K(ret), K(mid_key), K(key));
@@ -400,6 +402,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
 {
   int ret = OB_SUCCESS;
   BtreeNode *child = nullptr;
+  BtreeVal val;
   Version child_version;
   Version node_current_version;
   Version::Status node_status = Version::Status::NOT_CHANGED;
@@ -414,7 +417,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
     } while (node != get_root());
 
     while (OB_SUCC(ret) && node->get_level() > level) {
-      BtreeVal val;
+      node->prefetch();
       if (OB_FAIL(node->search(key, val))) {
         TRANS_LOG(ERROR, "Node search failed.", K(ret), K(key), KPC(node));
       } else {
@@ -486,6 +489,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
     if (OB_FAIL(find_node(key, 0, leaf, version, path))) {
       TRANS_LOG(ERROR, "Find leaf node failed.", K(ret), K(key));
     } else {
+      leaf->prefetch();
       // Before modifying the leaf, we need to get the latch.
       leaf->get_version().latch();
       if (OB_UNLIKELY(leaf->get_version().has_splitted(version))) {
@@ -761,6 +765,7 @@ int BtreeIterator<BtreeKey, BtreeVal>::scan_forward()
   LeafNode *next_leaf = nullptr;
   Version version;
   bool is_done = false;
+  leaf_->prefetch();
 
   while (OB_SUCC(ret) && !is_done) {
     version = leaf_->get_version().get_stable_snapshot();
@@ -796,6 +801,7 @@ int BtreeIterator<BtreeKey, BtreeVal>::scan_backward()
   while (OB_SUCC(ret) && !is_end_ && !is_done) {
     kv_queue_.reset();
     prev_leaf = leaf_->get_prev();
+    prev_leaf->prefetch();
     version = prev_leaf->get_version().get_stable_snapshot();
     if (prev_leaf != ATOMIC_LOAD_ACQ(&leaf_->get_prev())) {  // double check
       // Prev leaf has splitted, so we may be missing some keys. Retry.

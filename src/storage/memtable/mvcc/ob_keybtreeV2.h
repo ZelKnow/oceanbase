@@ -313,7 +313,7 @@ template <typename BtreeKey, typename BtreeVal>
 class BtreeNode {
 private:
   using BtreeKV = BtreeKV<BtreeKey, BtreeVal>;
-
+  
 public:
   BtreeNode() : level_(0), version_(), permutation_()
   {}
@@ -355,6 +355,12 @@ public:
   OB_INLINE void set_level(uint8_t level)
   {
     level_ = level;
+  }
+  OB_INLINE void prefetch()
+  {
+    for(int i=1;i<5;i++) {
+      __builtin_prefetch((const char *)this + i * 64, 0, 3);
+    }
   }
   /**
    * @brief Insert \p key and \p val into the node. Doesn't check if there is enough space for insert.

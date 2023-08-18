@@ -55,8 +55,8 @@ int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation
 
   while (OB_SUCC(ret) && l < r) {
     mid = (l + r + 1) / 2;
-    __builtin_prefetch(get_kv((mid+r+1)/2, snapshot_permutation).key_.get_ptr());
-    __builtin_prefetch(get_kv((mid+l)/2, snapshot_permutation).key_.get_ptr());
+    __builtin_prefetch(get_kv((mid + r + 1) / 2, snapshot_permutation).key_.get_ptr());
+    __builtin_prefetch(get_kv((mid + l) / 2, snapshot_permutation).key_.get_ptr());
     mid_key = get_kv(mid, snapshot_permutation).key_;
     if (OB_FAIL(mid_key.compare(key, cmp))) {
       TRANS_LOG(ERROR, "Compare error.", K(ret), K(mid_key), K(key));
@@ -422,7 +422,10 @@ int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
         TRANS_LOG(ERROR, "Node search failed.", K(ret), K(key), KPC(node));
       } else {
         child = reinterpret_cast<BtreeNode *>(val);
-        child_version = child->get_version().get_stable_snapshot();
+        if (node->get_level() > level + 1)
+          child_version = child->get_version().get_stable_snapshot();
+        else
+          child_version = child->get_version().get_inserting_snapshot();
         node_status = node->get_version().has_changed(version);
         if (node_status == Version::Status::SPLITTED) {
           // Node has been splitted while we were searching for the child. In this case, the key we're looking for
@@ -593,16 +596,14 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
   BtreeKey fence_key;
   NodePairArray pairs;
 
-  leaf->get_version().set_splitting();
-
   if (OB_FAIL(node_allocator_.make_leaf(new_leaf))) {
-    leaf->get_version().unlatch();
+
   } else if (OB_FAIL(pre_alloc_nodes(key, path, pairs))) {
     node_allocator_.free_node(new_leaf);
-    leaf->get_version().unlatch();
   } else {
     new_node = new_leaf;
     new_node->get_version().latch();
+    leaf->get_version().set_splitting();
     new_node->get_version().set_splitting();
 
     // Adjust the sibling pointer of the leaf node
@@ -768,12 +769,12 @@ int BtreeIterator<BtreeKey, BtreeVal>::scan_forward()
   leaf_->prefetch();
 
   while (OB_SUCC(ret) && !is_done) {
-    version = leaf_->get_version().get_stable_snapshot();
+    version = leaf_->get_version().get_inserting_snapshot();
     if (OB_FAIL(leaf_->scan(end_key_, exclude_end_key_, false, kv_queue_, is_end_))) {
       TRANS_LOG(ERROR, "Scan failed.", K(ret), K(end_key_), K(exclude_end_key_), KPC_(leaf));
     } else {
       next_leaf = leaf_->get_next();
-      Version leaf_new_version = leaf_->get_version().get_stable_snapshot();
+      Version leaf_new_version = leaf_->get_version().get_inserting_snapshot();
       if (leaf_new_version.has_splitted(version)) {
         kv_queue_.reset();
         version = leaf_new_version;
@@ -802,7 +803,7 @@ int BtreeIterator<BtreeKey, BtreeVal>::scan_backward()
     kv_queue_.reset();
     prev_leaf = leaf_->get_prev();
     prev_leaf->prefetch();
-    version = prev_leaf->get_version().get_stable_snapshot();
+    version = prev_leaf->get_version().get_inserting_snapshot();
     if (prev_leaf != ATOMIC_LOAD_ACQ(&leaf_->get_prev())) {  // double check
       // Prev leaf has splitted, so we may be missing some keys. Retry.
     } else if (OB_FAIL(prev_leaf->scan(end_key_, exclude_end_key_, true, kv_queue_, is_end_))) {

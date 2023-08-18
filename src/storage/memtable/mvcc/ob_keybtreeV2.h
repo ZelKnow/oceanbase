@@ -70,9 +70,9 @@ public:
     Version stable_version;
     stable_version.data_ = ATOMIC_LOAD_ACQ(&this->data_);
     while (true) {
-      for (int i = 0; i < MAX_TRY_COUNT && stable_version.data_ & DIRTY_MASK; i++) {
+      for (int j = 1; j <= MAX_SNAPSHOT_TRY_COUNT && stable_version.data_ & DIRTY_MASK; ++j) {
         PAUSE();
-        stable_version.data_ = this->data_;
+        stable_version.data_ = ATOMIC_LOAD_ACQ(&this->data_);
       }
       if (stable_version.data_ & DIRTY_MASK) {
         sched_yield();
@@ -83,7 +83,28 @@ public:
     // As a reader, we need to ensure that all our read operations on the node
     // occur after we take a snapshot of the version, so a memory fence is needed.
     // TODO(shouluo): Maybe an acquire fence is enough.
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    // __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    return stable_version;
+  }
+  Version get_inserting_snapshot() const
+  {
+    Version stable_version;
+    stable_version.data_ = ATOMIC_LOAD_ACQ(&this->data_);
+    while (true) {
+      for (int j = 1; j <= MAX_SNAPSHOT_TRY_COUNT && stable_version.data_ & SPLITTING_BIT; ++j) {
+        PAUSE();
+        stable_version.data_ = ATOMIC_LOAD_ACQ(&this->data_);
+      }
+      if (stable_version.data_ & SPLITTING_BIT) {
+        sched_yield();
+      } else {
+        break;
+      }
+    }
+    // As a reader, we need to ensure that all our read operations on the node
+    // occur after we take a snapshot of the version, so a memory fence is needed.
+    // TODO(shouluo): Maybe an acquire fence is enough.
+    // __atomic_thread_fence(__ATOMIC_SEQ_CST);
     return stable_version;
   }
   OB_INLINE Version get_unstable_snapshot() const
@@ -125,7 +146,7 @@ public:
     // So a memory fence is needed here.
     // TODO(shouluo): Maybe an acquire fence is enough.
     bool bool_ret = false;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
     if (is_splitting()) {
       bool_ret = true;
     } else if (get_vsplit() != snapshot_version.get_vsplit()) {
@@ -136,7 +157,7 @@ public:
   bool has_inserted(Version &snapshot_version) const
   {
     bool bool_ret = false;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
     if (is_inserting()) {
       bool_ret = true;
     } else if (get_vinsert() != snapshot_version.get_vinsert()) {
@@ -146,7 +167,7 @@ public:
   }
   Status has_changed(Version &snapshot_version) const
   {
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
     Status s_ret = Status::NOT_CHANGED;
     Version v = get_unstable_snapshot();
     if (((v.data_ ^ snapshot_version.data_) & (~LATCH_BIT)) != 0) {
@@ -167,33 +188,45 @@ public:
   }
   void set_inserting()
   {
-    data_ = data_ | INSERTING_BIT;
     // As a writer, we need to make sure that all our write operations to the node happen after
     // we set the inserting/splitting bit, otherwise the reader may not find themselves
     // having read an inconsistent state. So a memory fence is needed.
     // TODO(shouluo): Maybe a release fence is enough.
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    ATOMIC_STORE_REL(&data_, data_ | INSERTING_BIT);
   }
   void set_splitting()
   {
-    data_ = data_ | SPLITTING_BIT;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    ATOMIC_STORE_REL(&data_, data_ | SPLITTING_BIT);
   }
   void latch()
   {
     uint64_t old_data = 0;
-    uint64_t new_data = 0;
+    int try_count = 0;
     while (true) {
-      for (int i = 0; i < MAX_TRY_COUNT; i++) {
-        uint64_t old_data = data_ & (~LATCH_BIT);
-        uint64_t new_data = old_data | LATCH_BIT;
-        if (ATOMIC_BCAS(&data_, old_data, new_data)) {
+      while (try_count < MAX_LATCH_TRY_COUNT) {
+        old_data = ATOMIC_LOAD_ACQ(&data_);
+        if (old_data & LATCH_BIT) {
+          if (old_data & DIRTY_MASK) {
+            for (int i = 0; i < try_count * 10; ++i) {
+              PAUSE();
+            }
+            if (ATOMIC_BCAS(&data_, data_ & (~LATCH_BIT), data_ | LATCH_BIT)) {
+              return;
+            } else {
+              ++try_count;
+              PAUSE();
+            }
+          } else {
+            sched_yield();
+          }
+        } else if (ATOMIC_BCAS(&data_, old_data, old_data | LATCH_BIT)) {
           return;
         } else {
-          PAUSE();
+          ++try_count;
         }
       }
       sched_yield();
+      try_count = 0;
     }
     // We don't need to set fence here because CAS do that for us.
   }
@@ -207,7 +240,7 @@ public:
     }
     // We need to make sure all our writes to the node happen before we unlatch the node
     // Otherwise readers may not find themselves having read an inconsistent state.
-    ATOMIC_BCAS(&data_, data_, data_ & ULATCH_MASK);
+    ATOMIC_STORE(&data_, data_ & ULATCH_MASK);
   }
   void reset()
   {
@@ -228,7 +261,7 @@ private:
     ULATCH_MASK = ~(LATCH_BIT | INSERTING_BIT | SPLITTING_BIT),
     DIRTY_MASK = INSERTING_BIT | SPLITTING_BIT
   };
-  enum { MAX_TRY_COUNT = 100 };
+  enum { MAX_SNAPSHOT_TRY_COUNT = 100, MAX_LATCH_TRY_COUNT = 20 };
 };
 
 /**
@@ -313,7 +346,7 @@ template <typename BtreeKey, typename BtreeVal>
 class BtreeNode {
 private:
   using BtreeKV = BtreeKV<BtreeKey, BtreeVal>;
-  
+
 public:
   BtreeNode() : level_(0), version_(), permutation_()
   {}
@@ -358,7 +391,7 @@ public:
   }
   OB_INLINE void prefetch()
   {
-    for(int i=1;i<5;i++) {
+    for (int i = 1; i < 5; i++) {
       __builtin_prefetch((const char *)this + i * 64, 0, 3);
     }
   }

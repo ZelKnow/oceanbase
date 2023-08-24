@@ -43,7 +43,7 @@ void BtreeNode<BtreeKey, BtreeVal>::dump(FILE *file)
 }
 
 template <typename BtreeKey, typename BtreeVal>
-int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation &snapshot_permutation, int &pos)
+int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation &snapshot_permutation, int &pos, int &prefix, int node_prefix)
 {
   int ret = OB_SUCCESS;
   int n = snapshot_permutation.size();
@@ -52,18 +52,28 @@ int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation
   int cmp = 0;
   int mid = 0;
   BtreeKey mid_key;
+  
+  prefix = min(prefix, node_prefix);
 
   while (OB_SUCC(ret) && l < r) {
     mid = (l + r + 1) / 2;
     __builtin_prefetch(get_kv((mid + r + 1) / 2, snapshot_permutation).key_.get_ptr());
     __builtin_prefetch(get_kv((mid + l) / 2, snapshot_permutation).key_.get_ptr());
     mid_key = get_kv(mid, snapshot_permutation).key_;
-    if (OB_FAIL(mid_key.compare(key, cmp))) {
+    if (OB_FAIL(mid_key.compare(key, cmp, prefix))) {
       TRANS_LOG(ERROR, "Compare error.", K(ret), K(mid_key), K(key));
-    } else if (cmp <= 0) {
+    } else if (prefix < node_prefix) {
+      if (cmp < 0) {
+        l = r;
+      } else {
+        r = l = -1;
+      }
+    } else if(cmp <= 0) {
       l = mid;
+      prefix = node_prefix;
     } else {
       r = mid - 1;
+      prefix = node_prefix;
     }
   }
 
@@ -73,6 +83,7 @@ int BtreeNode<BtreeKey, BtreeVal>::search_(const BtreeKey key, const Permutation
     // empty
   } else if (OB_UNLIKELY(n == 0)) {
     l = -1;
+    prefix = key.get_ptr()->val_len_;
   } else if (OB_FAIL(get_kv(0, snapshot_permutation).key_.compare(key, cmp))) {
     TRANS_LOG(ERROR, "Compare error.", K(ret), K(get_kv(0, snapshot_permutation).key_), K(key));
   } else if (cmp > 0) {
@@ -93,15 +104,16 @@ void BtreeNode<BtreeKey, BtreeVal>::copy_to_(BtreeNode *other, int start, int en
 }
 
 template <typename BtreeKey, typename BtreeVal>
-int BtreeNode<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
+int BtreeNode<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val, int &prefix)
 {
   int pos = 0;
   int ret = OB_SUCCESS;
 
-  if (OB_FAIL(search_(key, permutation_, pos))) {
+  if (OB_FAIL(search_(key, permutation_, pos, prefix, node_prefix_))) {
     TRANS_LOG(ERROR, "Search failed.", K(ret), K(key), K(*this));
   } else {
     kvs_[permutation_.size()] = BtreeKV{key, val};
+    node_prefix_ = prefix;
     __atomic_thread_fence(__ATOMIC_RELEASE);
     permutation_.insert(pos + 1, permutation_.size());
   }
@@ -110,16 +122,18 @@ int BtreeNode<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
 }
 
 template <typename BtreeKey, typename BtreeVal>
-int LeafNode<BtreeKey, BtreeVal>::search(const BtreeKey key, BtreeVal &val)
+int LeafNode<BtreeKey, BtreeVal>::search(const BtreeKey key, BtreeVal &val, int &prefix)
 {
   int ret = OB_SUCCESS;
   // snapshot the permutation, prevent seeing inconsistent state due to
   // concurrent writers modifying permutation.
   Permutation snapshot_permutation(this->permutation_);
+  __atomic_thread_fence(__ATOMIC_ACQUIRE);
+  int node_prefix = this->node_prefix_;
   int pos = -1;
   int cmp = 0;
 
-  if (OB_FAIL(this->search_(key, snapshot_permutation, pos))) {
+  if (OB_FAIL(this->search_(key, snapshot_permutation, pos, prefix, node_prefix))) {
     TRANS_LOG(ERROR, "search_ failed.", K(ret), K(key), K(*this), K(snapshot_permutation));
   } else if (OB_LIKELY(pos >= 0)) {
     BtreeKV &kv = this->get_kv(pos, snapshot_permutation);
@@ -138,12 +152,13 @@ int LeafNode<BtreeKey, BtreeVal>::search(const BtreeKey key, BtreeVal &val)
 }
 
 template <typename BtreeKey, typename BtreeVal>
-int LeafNode<BtreeKey, BtreeVal>::split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key)
+int LeafNode<BtreeKey, BtreeVal>::split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key, int &prefix)
 {
   int ret = OB_SUCCESS;
   int n = this->size();
   int cmp = 0;
   LeafNode *new_leaf = reinterpret_cast<LeafNode *>(new_node);
+  int tmp_prefix = prefix;
 
   // Redistribute key-values. First copy the right half of node to the new leaf.
   this->copy_to_(new_leaf, (n + 1) / 2, n - 1);
@@ -158,26 +173,30 @@ int LeafNode<BtreeKey, BtreeVal>::split_and_insert(BtreeNode *new_node, BtreeKey
 
   fence_key = new_leaf->get_kv(0, new_leaf->permutation_).key_;
 
-  // insert the key-value
-  if (OB_FAIL(fence_key.compare(key, cmp))) {
+  if (OB_FAIL(this->maintain_prefix())) {
+
+  } else if (OB_FAIL(new_leaf->maintain_prefix())) {
+
+  } else if (OB_FAIL(fence_key.compare(key, cmp, tmp_prefix))) { // insert the key-value
     TRANS_LOG(ERROR, "Compare failed.", K(ret), K(fence_key), K(key));
   } else if (cmp > 0) {
-    ret = this->insert(key, val);
+    ret = this->insert(key, val, prefix);
   } else {
-    ret = new_leaf->insert(key, val);
+    ret = new_leaf->insert(key, val, prefix);
   }
   return ret;
 }
 
 template <typename BtreeKey, typename BtreeVal>
 int LeafNode<BtreeKey, BtreeVal>::find_left_boundary_(
-    BtreeKey key, bool excluded, Permutation snapshot_permutation, int &boundary_pos, bool &is_end)
+    BtreeKey key, bool excluded, Permutation snapshot_permutation, int &boundary_pos, bool &is_end, int node_prefix)
 {
   int ret = OB_SUCCESS;
   int cmp = 0;
   is_end = true;
+  int prefix = 0;
 
-  if (OB_FAIL(key.compare(this->get_kv(0, snapshot_permutation).key_, cmp))) {
+  if (OB_FAIL(key.compare(this->get_kv(0, snapshot_permutation).key_, cmp, prefix))) {
     TRANS_LOG(ERROR, "Compare failed.", K(ret), K(key), K(this->get_kv(0, snapshot_permutation).key_));
   } else if (cmp < 0) {
     // Key is less than ALL keys on the node.
@@ -186,9 +205,11 @@ int LeafNode<BtreeKey, BtreeVal>::find_left_boundary_(
   } else if (OB_UNLIKELY(cmp == 0)) {
     // Key is equal to the minimum keys on the node.
     boundary_pos = excluded ? 1 : 0;
-  } else if (OB_FAIL(this->search_(key, snapshot_permutation, boundary_pos))) {
+  } else if (FALSE_IT(prefix = min(prefix, node_prefix))) {
+
+  } else if (OB_FAIL(this->search_(key, snapshot_permutation, boundary_pos, prefix, node_prefix))) {
     TRANS_LOG(ERROR, "search_ failed.", K(ret), K(key), K(*this), K(snapshot_permutation));
-  } else if (!excluded && OB_FAIL(key.compare(this->get_kv(boundary_pos, snapshot_permutation).key_, cmp))) {
+  } else if (!excluded && OB_FAIL(key.compare(this->get_kv(boundary_pos, snapshot_permutation).key_, cmp, prefix))) {
     TRANS_LOG(ERROR, "Compare failed.", K(ret), K(key), K(this->get_kv(boundary_pos, snapshot_permutation).key_));
   } else if (excluded || cmp != 0) {
     // case 1: excluded.
@@ -204,13 +225,14 @@ int LeafNode<BtreeKey, BtreeVal>::find_left_boundary_(
 
 template <typename BtreeKey, typename BtreeVal>
 int LeafNode<BtreeKey, BtreeVal>::find_right_boundary_(
-    BtreeKey key, bool excluded, Permutation snapshot_permutation, int &boundary_pos, bool &is_end)
+    BtreeKey key, bool excluded, Permutation snapshot_permutation, int &boundary_pos, bool &is_end, int node_prefix)
 {
   int ret = OB_SUCCESS;
   int cmp = 0;
   is_end = true;
+  int prefix = 0;
 
-  if (OB_FAIL(key.compare(this->get_kv(snapshot_permutation.size() - 1, snapshot_permutation).key_, cmp))) {
+  if (OB_FAIL(key.compare(this->get_kv(snapshot_permutation.size() - 1, snapshot_permutation).key_, cmp, prefix))) {
     TRANS_LOG(ERROR,
         "Compare failed.",
         K(ret),
@@ -223,11 +245,13 @@ int LeafNode<BtreeKey, BtreeVal>::find_right_boundary_(
   } else if (OB_UNLIKELY(cmp == 0)) {
     // Key is equal to the maximum key on the node.
     boundary_pos = excluded ? snapshot_permutation.size() - 2 : snapshot_permutation.size() - 1;
-  } else if (OB_FAIL(this->search_(key, snapshot_permutation, boundary_pos))) {
+  } else if (FALSE_IT(prefix = min(prefix, node_prefix))) {
+
+  } else if (OB_FAIL(this->search_(key, snapshot_permutation, boundary_pos, prefix, node_prefix))) {
     TRANS_LOG(ERROR, "search_ failed.", K(ret), K(key), K(*this), K(snapshot_permutation));
   } else if (boundary_pos == -1) {
     // Key is less than ALL keys on the node.
-  } else if (excluded && OB_FAIL(key.compare(this->get_kv(boundary_pos, snapshot_permutation).key_, cmp))) {
+  } else if (excluded && OB_FAIL(key.compare(this->get_kv(boundary_pos, snapshot_permutation).key_, cmp, prefix))) {
     TRANS_LOG(ERROR, "Compare failed.", K(ret), K(key), K(this->get_kv(boundary_pos, snapshot_permutation).key_));
   } else if (excluded && cmp == 0) {
     // Case 1: excluded, and cmp == 0.
@@ -262,11 +286,13 @@ int LeafNode<BtreeKey, BtreeVal>::scan(BtreeKey start_key, BtreeKey end_key, boo
   int start_pos = -1;
   int end_pos = -1;
   Permutation snapshot_permutation(this->permutation_);
+  __atomic_thread_fence(__ATOMIC_ACQUIRE);
+  int node_prefix = this->node_prefix_;
   int cmp = 0;
   is_end = false;
 
   if (!is_backward) {
-    if (OB_FAIL(find_left_boundary_(start_key, exclude_start_key, snapshot_permutation, start_pos, is_end))) {
+    if (OB_FAIL(find_left_boundary_(start_key, exclude_start_key, snapshot_permutation, start_pos, is_end, node_prefix))) {
       TRANS_LOG(ERROR,
           "Find left boundary failed.",
           K(ret),
@@ -275,7 +301,7 @@ int LeafNode<BtreeKey, BtreeVal>::scan(BtreeKey start_key, BtreeKey end_key, boo
           K(exclude_start_key),
           K(exclude_end_key),
           K(is_backward));
-    } else if (OB_FAIL(find_right_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end))) {
+    } else if (OB_FAIL(find_right_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end, node_prefix))) {
       TRANS_LOG(ERROR,
           "Find right boundary failed.",
           K(ret),
@@ -288,7 +314,7 @@ int LeafNode<BtreeKey, BtreeVal>::scan(BtreeKey start_key, BtreeKey end_key, boo
       // empty
     }
   } else {
-    if (OB_FAIL(find_right_boundary_(start_key, exclude_start_key, snapshot_permutation, start_pos, is_end))) {
+    if (OB_FAIL(find_right_boundary_(start_key, exclude_start_key, snapshot_permutation, start_pos, is_end, node_prefix))) {
       TRANS_LOG(ERROR,
           "Find right boundary failed.",
           K(ret),
@@ -297,7 +323,7 @@ int LeafNode<BtreeKey, BtreeVal>::scan(BtreeKey start_key, BtreeKey end_key, boo
           K(exclude_start_key),
           K(exclude_end_key),
           K(is_backward));
-    } else if (OB_FAIL(find_left_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end))) {
+    } else if (OB_FAIL(find_left_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end, node_prefix))) {
       TRANS_LOG(ERROR,
           "Find left boundary failed.",
           K(ret),
@@ -325,15 +351,17 @@ int LeafNode<BtreeKey, BtreeVal>::scan(
   int start_pos = -1;
   int end_pos = -1;
   Permutation snapshot_permutation(this->permutation_);
+  __atomic_thread_fence(__ATOMIC_ACQUIRE);
+  int node_prefix = this->node_prefix_;
   int cmp = 0;
   is_end = false;
 
   if (!is_backward) {
     start_pos = 0;
-    ret = find_right_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end);
+    ret = find_right_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end, node_prefix);
   } else {
     start_pos = snapshot_permutation.size() - 1;
-    ret = find_left_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end);
+    ret = find_left_boundary_(end_key, exclude_end_key, snapshot_permutation, end_pos, is_end, node_prefix);
   }
 
   if (OB_SUCC(ret)) {
@@ -343,16 +371,22 @@ int LeafNode<BtreeKey, BtreeVal>::scan(
 }
 
 template <typename BtreeKey, typename BtreeVal>
-int InternalNode<BtreeKey, BtreeVal>::search(const BtreeKey key, BtreeVal &val)
+int InternalNode<BtreeKey, BtreeVal>::search(const BtreeKey key, BtreeVal &val, int &prefix)
 {
   int ret = OB_SUCCESS;
   int pos = -1;
   Permutation snapshot_permutation(this->permutation_);
+  __atomic_thread_fence(__ATOMIC_ACQUIRE);
+  int node_prefix = this->get_node_prefix();
 
-  if (OB_FAIL(this->search_(key, snapshot_permutation, pos))) {
+  if (OB_FAIL(this->search_(key, snapshot_permutation, pos, prefix, node_prefix))) {
     TRANS_LOG(ERROR, "search_ failed.", K(ret), K(key), K(*this), K(snapshot_permutation));
-  } else if (pos == -1) {
+  } else if (OB_UNLIKELY(pos == -1)) {
     val = leftmost_child_;
+    prefix = 0;
+  } else if (OB_UNLIKELY(pos == snapshot_permutation.size() - 1)) {
+    val = this->get_kv(pos, snapshot_permutation).val_;
+    prefix = 0;
   } else {
     val = this->get_kv(pos, snapshot_permutation).val_;
   }
@@ -362,12 +396,13 @@ int InternalNode<BtreeKey, BtreeVal>::search(const BtreeKey key, BtreeVal &val)
 
 template <typename BtreeKey, typename BtreeVal>
 int InternalNode<BtreeKey, BtreeVal>::split_and_insert(
-    BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key)
+    BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key, int &prefix)
 {
   int ret = OB_SUCCESS;
   int n = this->size();
   int cmp = 0;
   InternalNode *new_internal = reinterpret_cast<InternalNode *>(new_node);
+  int tmp_prefix = prefix;
 
   // Redistribute key-values. First copy the right half(except the middle key) of node to the new internal node.
   this->copy_to_(new_internal, n / 2 + 1, n - 1);
@@ -384,13 +419,16 @@ int InternalNode<BtreeKey, BtreeVal>::split_and_insert(
   // Set the size of new leaf to n/2, retain only the left half (originally the right half of this node).
   new_internal->permutation_.set_size((n - 1) / 2);
 
-  // insert the key-value
-  if (OB_FAIL(fence_key.compare(key, cmp))) {
+  if(OB_FAIL(this->maintain_prefix())) {
+
+  } else if(OB_FAIL(new_internal->maintain_prefix())) {
+
+  } else if (OB_FAIL(fence_key.compare(key, cmp, tmp_prefix))) { // insert the key-value
     TRANS_LOG(ERROR, "Compare failed.", K(ret), K(fence_key), K(key));
   } else if (cmp > 0) {
-    this->insert(key, val);
+    this->insert(key, val, prefix);
   } else {
-    new_internal->insert(key, val);
+    new_internal->insert(key, val, prefix);
   }
 
   return ret;
@@ -398,7 +436,7 @@ int InternalNode<BtreeKey, BtreeVal>::split_and_insert(
 
 template <typename BtreeKey, typename BtreeVal>
 int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
-    BtreeKey key, uint8_t level, BtreeNode *&node, Version &version, Path &path)
+    BtreeKey key, uint8_t level, BtreeNode *&node, Version &version, Path &path, int &prefix)
 {
   int ret = OB_SUCCESS;
   BtreeNode *child = nullptr;
@@ -409,6 +447,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
 
   do {
     path.reset();
+    prefix = 0;
     // First, we need to get root and its stable version. And we need to double check the
     // root to make sure that the root has not changed during this period.
     do {
@@ -418,7 +457,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::find_node(
 
     while (OB_SUCC(ret) && node->get_level() > level) {
       node->prefetch();
-      if (OB_FAIL(node->search(key, val))) {
+      if (OB_FAIL(node->search(key, val, prefix))) {
         TRANS_LOG(ERROR, "Node search failed.", K(ret), K(key), KPC(node));
       } else {
         child = reinterpret_cast<BtreeNode *>(val);
@@ -454,11 +493,12 @@ int ObKeyBtree<BtreeKey, BtreeVal>::search(BtreeKey key, BtreeVal &val)
   Version version;
   Path path;
   bool is_found = false;
+  int prefix = 0;
 
   while (OB_SUCC(ret) && !is_found) {
-    if (OB_FAIL(find_node(key, 0, leaf, version, path))) {
+    if (OB_FAIL(find_node(key, 0, leaf, version, path, prefix))) {
       TRANS_LOG(ERROR, "Find leaf node failed.", K(ret), K(key));
-    } else if (OB_FAIL(leaf->search(key, val))) {
+    } else if (OB_FAIL(leaf->search(key, val, prefix))) {
       if (OB_ENTRY_NOT_EXIST != ret) {
         TRANS_LOG(ERROR, "Search key on leaf failed.", K(ret), K(key), KPC(leaf));
       }
@@ -482,6 +522,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
   Version version;
   Path path;
   bool is_found = false;
+  int prefix = 0;
 
   if (OB_UNLIKELY(get_root()->get_level() >= MAX_HEIGHT)) {
     ret = OB_SIZE_OVERFLOW;
@@ -489,7 +530,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
   }
 
   while (OB_SUCC(ret) && !is_found) {
-    if (OB_FAIL(find_node(key, 0, leaf, version, path))) {
+    if (OB_FAIL(find_node(key, 0, leaf, version, path, prefix))) {
       TRANS_LOG(ERROR, "Find leaf node failed.", K(ret), K(key));
     } else {
       leaf->prefetch();
@@ -507,7 +548,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::insert(BtreeKey key, BtreeVal val)
   if (OB_FAIL(ret)) {
     // empty
   } else if (OB_LIKELY(!leaf->is_full())) {  // leaf is not full, insert directly
-    if (OB_FAIL(leaf->insert(key, val))) {
+    if (OB_FAIL(leaf->insert(key, val, prefix))) {
       TRANS_LOG(ERROR, "Insert key into leaf failed.", K(ret), K(key), K(val), KPC(leaf));
     }
     leaf->get_version().unlatch();
@@ -532,6 +573,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::pre_alloc_nodes(BtreeKey key, Path &path, No
   InternalNode *new_internal = nullptr;
   BtreeNode *parent = nullptr;
   Version version;
+  int prefix = 0;
 
   while (OB_SUCC(ret) && !is_finished && pairs.size() < MAX_HEIGHT) {
     if (OB_UNLIKELY(path.empty())) {
@@ -548,7 +590,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::pre_alloc_nodes(BtreeKey key, Path &path, No
     while (OB_SUCC(ret) && !is_finished && parent->get_version().has_splitted(version)) {
       // at this point parent is no longer the parent of node, so we need to find the real parent
       parent->get_version().unlatch();
-      if (OB_SUCC(find_node(key, parent->get_level(), parent, version, path))) {
+      if (OB_SUCC(find_node(key, parent->get_level(), parent, version, path, prefix))) {
         parent->get_version().latch();
       }
     }
@@ -595,11 +637,13 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
   InternalNode *new_internal = nullptr;
   BtreeKey fence_key;
   NodePairArray pairs;
+  int prefix = 0;
 
   if (OB_FAIL(node_allocator_.make_leaf(new_leaf))) {
-
+    leaf->get_version().unlatch();
   } else if (OB_FAIL(pre_alloc_nodes(key, path, pairs))) {
     node_allocator_.free_node(new_leaf);
+    leaf->get_version().unlatch();
   } else {
     new_node = new_leaf;
     new_node->get_version().latch();
@@ -617,7 +661,7 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
 
   if (OB_FAIL(ret)) {
     // empty
-  } else if (OB_FAIL(node->split_and_insert(new_node, key, value, fence_key))) {
+  } else if (OB_FAIL(node->split_and_insert(new_node, key, value, fence_key, prefix))) {
     TRANS_LOG(ERROR, "Split node failed.", K(ret), K(key), KPC(node), KPC(new_node));
   }
 
@@ -634,8 +678,9 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
     new_internal->get_version().set_splitting();
     new_internal->set_level(parent->get_level());
 
+    prefix = 0;
     if (OB_SUCC(parent->split_and_insert(
-            new_internal, key, reinterpret_cast<BtreeVal>(new_node), fence_key))) {  // going up!
+            new_internal, key, reinterpret_cast<BtreeVal>(new_node), fence_key, prefix))) {  // going up!
       new_node->get_version().unlatch();
       node = parent;
       new_node = new_internal;
@@ -648,14 +693,16 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
 
   } else if (OB_LIKELY(new_internal == nullptr)) {
     parent->get_version().set_inserting();
-    ret = parent->insert(fence_key, reinterpret_cast<BtreeVal>(new_node));
+    prefix = 0;
+    ret = parent->insert(fence_key, reinterpret_cast<BtreeVal>(new_node), prefix);
     parent->get_version().unlatch();
     node->get_version().unlatch();
     new_node->get_version().unlatch();
   } else {
     new_internal->set_leftmost_child(reinterpret_cast<BtreeVal>(node));
     new_internal->set_level(node->get_level() + 1);
-    ret = new_internal->insert(fence_key, reinterpret_cast<BtreeVal>(new_node));
+    prefix = 0;
+    ret = new_internal->insert(fence_key, reinterpret_cast<BtreeVal>(new_node), prefix);
     root_ = new_internal;
     new_internal->get_version().unlatch();
     node->get_version().unlatch();
@@ -716,10 +763,11 @@ int BtreeIterator<BtreeKey, BtreeVal>::first_scan()
   BtreeNode *node = nullptr;
   Version version;
   bool is_done = false;
+  int prefix = 0;
 
   while (OB_SUCC(ret) && !is_done) {
     kv_queue_.reset();
-    if (OB_FAIL(tree_->find_node(start_key_, 0, node, version, path))) {
+    if (OB_FAIL(tree_->find_node(start_key_, 0, node, version, path, prefix))) {
       // empty
     } else if (FALSE_IT(leaf_ = reinterpret_cast<LeafNode *>(node))) {
 

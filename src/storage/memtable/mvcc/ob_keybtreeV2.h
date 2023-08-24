@@ -348,7 +348,7 @@ private:
   using BtreeKV = BtreeKV<BtreeKey, BtreeVal>;
 
 public:
-  BtreeNode() : level_(0), version_(), permutation_()
+  BtreeNode() : level_(0), version_(), permutation_(), node_prefix_(0)
   {}
   void reset()
   {
@@ -395,14 +395,22 @@ public:
       __builtin_prefetch((const char *)this + i * 64, 0, 3);
     }
   }
+  OB_INLINE void set_node_prefix(int node_prefix)
+  {
+    node_prefix_ = node_prefix;
+  }
+  OB_INLINE int get_node_prefix()
+  {
+    return node_prefix_;
+  }
   /**
    * @brief Insert \p key and \p val into the node. Doesn't check if there is enough space for insert.
    * @param key the key to be inserted.
    * @param val the value to be inserted.
    * @return OB_SUCCESS on success, others on compare fail.
    */
-  int insert(BtreeKey key, BtreeVal val);
-  virtual int search(const BtreeKey key, BtreeVal &val) = 0;
+  int insert(BtreeKey key, BtreeVal val, int &prefix);
+  virtual int search(const BtreeKey key, BtreeVal &val, int &prefix) = 0;
   /**
    * @brief Split \p this node, move right-half keys to \p new_node, and then insert \p key and \p val
    *        into \p this or \p new_node.
@@ -412,7 +420,7 @@ public:
    * @param[out] fence_key the fence key to be inserted into the parent node.
    * @return OB_SUCCESS on success, others on compare fail.
    */
-  virtual int split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key) = 0;
+  virtual int split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key, int &prefix) = 0;
   DEFINE_VIRTUAL_TO_STRING({
     J_KV(K_(version), K_(permutation), K_(level));
     J_COMMA();
@@ -429,14 +437,19 @@ protected:
    * @param snapshot_permutation the permutation used to search
    * @return -1 if \p key is greater than all key in the node.
    */
-  int search_(const BtreeKey key, const Permutation &snapshot_permutation, int &pos);
+  int search_(const BtreeKey key, const Permutation &snapshot_permutation, int &pos, int &prefix, int node_prefix);
   /**
    * @brief Copy [\p start, \p end] key-value pairs to \p other.
    */
   OB_INLINE void copy_to_(BtreeNode *other, int start, int end);
+  int maintain_prefix() {
+    int cmp = 0;
+    return kvs_[permutation_.at(0)].key_.compare(kvs_[permutation_.at(permutation_.size()-1)].key_, cmp, node_prefix_);
+  }
   uint8_t level_;
   Version version_;
   Permutation permutation_;
+  int node_prefix_;
   BtreeKV kvs_[max_size()];
   DISALLOW_COPY_AND_ASSIGN(BtreeNode);
 };
@@ -533,14 +546,14 @@ public:
    */
   int scan(BtreeKey end_key, bool exclude_end_key, bool is_backward, KVQueue &kv_queue, bool &is_end);
   // Does not modify perv_ and next_ pointer.
-  virtual int split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key) override;
+  virtual int split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key, int &prefix) override;
   /**
    * @brief Search \p key on the LeafNode.
    * @param key the search key.
    * @param[out] val the corresponding value.
    * @return OB_SUCCESS on success, OB_ENTRY_NOT_EXIST if key is not exist, others on compare fail.
    */
-  virtual int search(const BtreeKey key, BtreeVal &val) override;
+  virtual int search(const BtreeKey key, BtreeVal &val, int &prefix) override;
   OB_INLINE LeafNode *&get_prev()
   {
     return prev_;
@@ -579,7 +592,7 @@ private:
    * @return int OB_SUCCESS on success, others on compare failure or KVQueue failure
    */
   int find_left_boundary_(
-      BtreeKey key, bool included, Permutation snapshot_permutation, int &boundary_pos, bool &is_end);
+      BtreeKey key, bool included, Permutation snapshot_permutation, int &boundary_pos, bool &is_end, int node_prefix);
   /**
    * @brief find the rightmost postion \p boundary_pos, such that \p key is less than
    * (or equal to, depending on the \p included parameter) the key at \p boundary_pos.
@@ -592,7 +605,7 @@ private:
    * @return int OB_SUCCESS on success, others on compare failure or KVQueue failure
    */
   int find_right_boundary_(
-      BtreeKey key, bool included, Permutation snapshot_permutation, int &boundary_pos, bool &is_end);
+      BtreeKey key, bool included, Permutation snapshot_permutation, int &boundary_pos, bool &is_end, int node_prefix);
 };
 
 template <typename BtreeKey, typename BtreeVal>
@@ -606,14 +619,14 @@ public:
   {
     leftmost_child_ = leftmost_child;
   }
-  virtual int split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key) override;
+  virtual int split_and_insert(BtreeNode *new_node, BtreeKey key, BtreeVal val, BtreeKey &fence_key, int &prefix) override;
   /**
    * @brief Search \p key on InternalNode.
    * @param key the search key.
    * @param[out] val the corresponding child node of the key.
    * @return OB_SUCCESS on success, others on compare fail.
    */
-  virtual int search(const BtreeKey key, BtreeVal &val) override;
+  virtual int search(const BtreeKey key, BtreeVal &val, int &prefix) override;
   OB_INLINE BtreeVal get_leftmost_child() const
   {
     return leftmost_child_;
@@ -815,7 +828,7 @@ public:
   TO_STRING_KV(KP_(root));
 
 private:
-  int find_node(BtreeKey key, uint8_t level, BtreeNode *&node, Version &version, Path &path);
+  int find_node(BtreeKey key, uint8_t level, BtreeNode *&node, Version &version, Path &path, int &prefix);
   int split(BtreeNode *&node, BtreeKey key, BtreeVal value, Path &path);
   int pre_alloc_nodes(BtreeKey key, Path &path, NodePairArray &stack);
   OB_INLINE BtreeNode *get_root() const

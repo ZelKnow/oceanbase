@@ -597,9 +597,10 @@ int ObKeyBtree<BtreeKey, BtreeVal>::split(BtreeNode *&node, BtreeKey key, BtreeV
   NodePairArray pairs;
 
   if (OB_FAIL(node_allocator_.make_leaf(new_leaf))) {
-
+    leaf->get_version().unlatch();
   } else if (OB_FAIL(pre_alloc_nodes(key, path, pairs))) {
     node_allocator_.free_node(new_leaf);
+    leaf->get_version().unlatch();
   } else {
     new_node = new_leaf;
     new_node->get_version().latch();

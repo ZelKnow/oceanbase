@@ -22,7 +22,10 @@
 #include <algorithm>
 #include <iostream>
 #include <vector>
+#include <atomic>
 #include <unordered_set>
+
+#define KEYTYPE_INT
 
 namespace oceanbase {
 namespace unittest {
@@ -37,8 +40,14 @@ using namespace oceanbase::keybtreeV2;
 
 class FakeAllocator : public ObIAllocator {
 public:
+  FakeAllocator(): ObIAllocator(), cnt(0) {}
   const char *attr = ObModIds::TEST;
   void *alloc(int64_t size) override
+  {
+    cnt += size;
+    return ob_malloc(size, attr);
+  }
+  void *alloc_key(int64_t size)
   {
     return ob_malloc(size, attr);
   }
@@ -56,7 +65,32 @@ public:
     static FakeAllocator allocator;
     return &allocator;
   }
+  std::atomic<int64_t> cnt;
 };
+
+int my_compare(const char *s, const int slen, const char *t, const int tlen, int &cmp, int &prefix)
+{
+  int start = prefix;
+  int min_len = min(slen, tlen);
+  for(int i=start;i<min_len;i++) {
+    if (*(s+i) != *(t+i)) {
+      cmp = int(*(s+i)) - int(*(t+i));
+      prefix = start + i;
+      return OB_SUCCESS;
+    }
+  }
+  if (slen == tlen) {
+    cmp = 0;
+    prefix = slen;
+  } else if (slen > tlen) {
+    cmp = 1;
+    prefix = min_len;
+  } else {
+    cmp = -1;
+    prefix = min_len;
+  }
+  return OB_SUCCESS;
+}
 
 class FakeKey {
 public:
@@ -64,13 +98,42 @@ public:
   {}
   FakeKey(ObObj *obj) : obj_(obj)
   {}
+  void set(int64_t data, int len) {
+    #ifdef KEYTYPE_INT
+    set_int(data);
+    #else
+    set_char(data, len);
+    #endif
+  }
   void set_int(int64_t data)
   {
     obj_->set_int(data);
   }
+  void set_char(int64_t data, int len)
+  {
+    char *aa = const_cast<char*>(obj_->get_string_ptr());
+    sprintf(aa, "%0*ld", len, data);
+  }
   int compare(FakeKey other, int &cmp) const
   {
     return obj_->compare(*other.obj_, cmp);
+  }
+  int compare(FakeKey other, int &cmp, int &prefix) const 
+  {
+    #ifdef KEYTYPE_INT
+    prefix = 0;
+    return compare(other, cmp);
+    #endif
+    int ret = OB_SUCCESS;
+    prefix = 0;
+    if(obj_->get_collation_type() != other.obj_->get_collation_type()) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if(obj_->get_collation_type() != CS_TYPE_UTF8MB4_BIN) {
+      ret = compare(other, cmp);
+    } else {
+      ret = my_compare(obj_->v_.string_, obj_->val_len_, other.obj_->v_.string_, other.obj_->val_len_, cmp, prefix);
+    }
+    return ret;
   }
   int64_t to_string(char *buf, const int64_t limit) const
   {
@@ -84,10 +147,11 @@ public:
   ObObj *obj_;
 };
 
-FakeKey build_int_key(int64_t key)
+FakeKey build_int_key(int64_t key) 
 {
   auto alloc = FakeAllocator::get_instance();
-  void *block = alloc->alloc(sizeof(ObObj));
+  void *block = alloc->alloc_key(sizeof(ObObj));
+  EXPECT_TRUE(OB_NOT_NULL(block));
   ObObj *obj = new (block) ObObj(key);
   return FakeKey(obj);
 }
@@ -95,7 +159,30 @@ FakeKey build_int_key(int64_t key)
 void free_key(FakeKey &key)
 {
   auto alloc = FakeAllocator::get_instance();
+  if (key.obj_->get_type() == ObObjType::ObCharType) {
+    alloc->free((void *)key.obj_->get_string_ptr());
+  }
   alloc->free((void *)key.obj_);
+}
+
+FakeKey build_char_key(int64_t key, int len) {
+  auto alloc = FakeAllocator::get_instance();
+  void *block = alloc->alloc_key(sizeof(ObObj));
+  EXPECT_TRUE(OB_NOT_NULL(block));
+  ObObj *obj = new(block) ObObj(ObObjType::ObCharType);
+  char *aa = (char *)alloc->alloc_key(len+1);
+  sprintf(aa, "%0*ld", len, key);
+  obj->set_string(ObObjType::ObCharType, aa, len);
+  obj->set_collation_type(CS_TYPE_UTF8MB4_BIN);
+  return FakeKey(obj);
+}
+
+FakeKey build_key(int64_t key, int len) {
+  #ifdef KEYTYPE_INT
+  return build_int_key(key);
+  #else
+  return build_char_key(key, len);
+  #endif
 }
 
 /*ObStoreRowkeyWrapper build_char_key(int cnt, int len) {
@@ -128,12 +215,12 @@ using NewBtreeIterator = BtreeIterator<FakeKey, int64_t*>;
 using OldBtreeNodeAllocator = keybtree::BtreeNodeAllocator<FakeKey, int64_t*>;
 using OldBtree = keybtree::ObKeyBtree<FakeKey, int64_t*>;
 using OldBtreeIterator = keybtree::BtreeIterator<FakeKey, int64_t*>;
-
 uint64_t THREAD_COUNT;
 uint64_t KEY_NUM;
 uint64_t INSERT_SCAN_RATIO = 10;
 
 void test_concurrent_insert(bool is_new) {
+  constexpr int KEY_LEN = 10;
   uint64_t PER_THREAD_INSERT_COUNT = KEY_NUM / THREAD_COUNT;
   NewBtree *new_btree;
   OldBtree *old_btree;
@@ -154,10 +241,12 @@ void test_concurrent_insert(bool is_new) {
   std::vector<std::vector<FakeKey>> data(THREAD_COUNT, std::vector<FakeKey>(PER_THREAD_INSERT_COUNT));
   for (int i = 0; i < THREAD_COUNT; i++) {
     for (int j = 0; j < PER_THREAD_INSERT_COUNT; j++) {
-      data[i][j] = build_int_key(THREAD_COUNT * j + i);
+      data[i][j] = build_key(THREAD_COUNT * j + i, KEY_LEN);
     }
     std::random_shuffle(data[i].begin(), data[i].end());
   }
+
+  volatile uint64_t start_time = rdtsc();
 
   // concurrent insert
   for (int thread_id = 0; thread_id < THREAD_COUNT; thread_id++) {
@@ -175,15 +264,21 @@ void test_concurrent_insert(bool is_new) {
       thread_id);
   }
 
-  uint64_t start_time = rdtsc();
   for (int thread_id = 0; thread_id < THREAD_COUNT; thread_id++) {
     threads[thread_id].join();
   }
+
+  volatile uint64_t end_time = rdtsc();
+
   if(is_new) {
-    std::cout<<"New Btree Concurrent Insert: "<<rdtsc()-start_time<<std::endl;
+    std::cout<<"New Btree Concurrent Insert: "<<end_time-start_time<<std::endl;
+    std::cout<<"New Btree Alloc: "<<allocator->cnt<<std::endl;
+    std::cout<<new_btree->size()<<std::endl;
     new_btree->destroy();
   } else {
-    std::cout<<"Old Btree Concurrent Insert: "<<rdtsc()-start_time<<std::endl;
+    std::cout<<"Old Btree Concurrent Insert: "<<end_time-start_time<<std::endl;
+    std::cout<<"Old Btree Alloc: "<<allocator->cnt<<std::endl;
+    std::cout<<old_btree->size()<<std::endl;
     old_btree->destroy();
   }
 
@@ -194,19 +289,19 @@ void test_concurrent_insert(bool is_new) {
   }
 }
 
-TEST(TestNewBtreeConcurrentInsert, smoke_test)
-{
-  test_concurrent_insert(true);
-}
-
 TEST(TestOldBtreeConcurrentInsert, smoke_test)
 {
   test_concurrent_insert(false);
 }
 
+TEST(TestNewBtreeConcurrentInsert, smoke_test)
+{
+  test_concurrent_insert(true);
+}
+
 void test_concurrent_insert_scan(bool is_new) {
   uint64_t PER_THREAD_INSERT_COUNT = KEY_NUM / THREAD_COUNT;
-
+  constexpr int KEY_LEN = 10;
   NewBtree *new_btree;
   OldBtree *old_btree;
 
@@ -226,17 +321,19 @@ void test_concurrent_insert_scan(bool is_new) {
   std::vector<std::vector<FakeKey>> data(THREAD_COUNT, std::vector<FakeKey>(PER_THREAD_INSERT_COUNT));
   for (int i = 0; i < THREAD_COUNT; i++) {
     for (int j = 0; j < PER_THREAD_INSERT_COUNT; j++) {
-      data[i][j] = build_int_key(THREAD_COUNT * j + i);
+      data[i][j] = build_key(THREAD_COUNT * j + i, KEY_LEN);
     }
     std::random_shuffle(data[i].begin(), data[i].end());
   }
+
+  volatile uint64_t start_time = rdtsc();
 
   std::vector<std::thread> threads(THREAD_COUNT);
   for (int thread_id = 0; thread_id < THREAD_COUNT; thread_id++) {
     threads[thread_id] = std::thread(
         [&](int i) {
-          FakeKey start_key = build_int_key(0);
-          FakeKey end_key = build_int_key(0);
+          FakeKey start_key = build_key(0, KEY_LEN);
+          FakeKey end_key = build_key(0, KEY_LEN);
           bool is_backward;
           for (int j = 0; j < PER_THREAD_INSERT_COUNT; j++) {
             int64_t *val = reinterpret_cast<int64_t*>(data[i][j].get_ptr());
@@ -251,14 +348,14 @@ void test_concurrent_insert_scan(bool is_new) {
             } else if (j % (2*INSERT_SCAN_RATIO) == 0) {
               int64_t start_int = ObRandom::rand(0, KEY_NUM);
               int64_t end_int = start_int + 4000;
-              start_key.set_int(start_int);
-              end_key.set_int(end_int);
+              start_key.set(start_int, KEY_LEN);
+              end_key.set(end_int, KEY_LEN);
               is_backward = false;
             } else {
               int64_t start_int = ObRandom::rand(0, KEY_NUM);
               int64_t end_int = start_int + 4000;
-              start_key.set_int(end_int);
-              end_key.set_int(start_int);
+              start_key.set(end_int, KEY_LEN);
+              end_key.set(start_int, KEY_LEN);
               is_backward = true;
             }
             if(is_new) {
@@ -280,15 +377,19 @@ void test_concurrent_insert_scan(bool is_new) {
         },
         thread_id);
   }
-  uint64_t start_time = rdtsc();
   for(int i=0;i<THREAD_COUNT;i++) {
     threads[i].join();
   }
+
+  volatile uint64_t end_time = rdtsc();
+
   if(is_new) {
-    std::cout<<"New Btree Concurrent Insert And Scan: "<<rdtsc()-start_time<<std::endl;
+    std::cout<<"New Btree Concurrent Insert And Scan: "<<end_time-start_time<<std::endl;
+    std::cout<<"New Btree Alloc: "<<allocator->cnt<<std::endl;
     new_btree->destroy();
   } else {
-    std::cout<<"Old Btree Concurrent Insert And Scan: "<<rdtsc()-start_time<<std::endl;
+    std::cout<<"Old Btree Concurrent Insert And Scan: "<<end_time-start_time<<std::endl;
+    std::cout<<"Old Btree Alloc: "<<allocator->cnt<<std::endl;
     old_btree->destroy();
   }
 
@@ -299,12 +400,12 @@ void test_concurrent_insert_scan(bool is_new) {
   }
 }
 
-TEST(TestNewConcurrentInsertAndScan, smoke_test) {
-  test_concurrent_insert_scan(true);
-}
-
 TEST(TestOldConcurrentInsertAndScan, smoke_test) {
   test_concurrent_insert_scan(false);
+}
+
+TEST(TestNewConcurrentInsertAndScan, smoke_test) {
+  test_concurrent_insert_scan(true);
 }
 
 }  // namespace unittest

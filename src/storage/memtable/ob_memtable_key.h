@@ -291,7 +291,48 @@ public:
   common::ObStoreRowkey *&get_rowkey() { return (common::ObStoreRowkey *&)rowkey_; }
   void get_rowkey(const common::ObStoreRowkey *&rowkey) const { rowkey = rowkey_; }
   void reset() { rowkey_ = nullptr; }
-  int compare(const ObStoreRowkeyWrapper &other, int &cmp) const { return rowkey_->compare(*(other.get_rowkey()), cmp); }
+  int my_compare(const char *s, const int slen, const char *t, const int tlen, int &cmp, int &prefix) const
+  {
+    int start = prefix;
+    int min_len = min(slen, tlen);
+    for(int i=start;i<min_len;i++) {
+      if (*(s+i) != *(t+i)) {
+        cmp = int(*(s+i)) - int(*(t+i));
+        prefix = start + i;
+        return OB_SUCCESS;
+      }
+    }
+    if (slen == tlen) {
+      cmp = 0;
+      prefix = slen;
+    } else if (slen > tlen) {
+      cmp = 1;
+      prefix = min_len;
+    } else {
+      cmp = -1;
+      prefix = min_len;
+    }
+    return OB_SUCCESS;
+  }
+  int compare(const ObStoreRowkeyWrapper &other, int &cmp) const {
+    if(rowkey_->get_obj_ptr()->get_collation_type() == CS_TYPE_UTF8MB4_BIN && other.rowkey_->get_obj_ptr()->get_collation_type() != CS_TYPE_UTF8MB4_BIN) {
+      int prefix = 0;
+      return my_compare(rowkey_->get_obj_ptr()->v_.string_, rowkey_->get_obj_ptr()->val_len_, other.rowkey_->get_obj_ptr()->v_.string_, other.rowkey_->get_obj_ptr()->val_len_, cmp, prefix);
+    }
+    return rowkey_->compare(*(other.get_rowkey()), cmp);
+  }
+  int compare(const ObStoreRowkeyWrapper &other, int &cmp, int &prefix) const {
+    int ret = OB_SUCCESS;
+    prefix = 0;
+    if(rowkey_->get_obj_ptr()->get_collation_type() != other.rowkey_->get_obj_ptr()->get_collation_type()) {
+      ret = compare(other, cmp);
+    } else if(rowkey_->get_obj_ptr()->get_collation_type() != CS_TYPE_UTF8MB4_BIN) {
+      ret = compare(other, cmp);
+    } else {
+      ret = my_compare(rowkey_->get_obj_ptr()->v_.string_, rowkey_->get_obj_ptr()->val_len_, other.rowkey_->get_obj_ptr()->v_.string_, other.rowkey_->get_obj_ptr()->val_len_, cmp, prefix);
+    }
+    return ret;
+  }
   int equal(const ObStoreRowkeyWrapper &other, bool &is_equal) const { return rowkey_->equal(*(other.get_rowkey()), is_equal); }
   uint64_t hash() const { return rowkey_->hash(); }
   int checksum(common::ObBatchChecksum &bc) const { return rowkey_->checksum(bc); }

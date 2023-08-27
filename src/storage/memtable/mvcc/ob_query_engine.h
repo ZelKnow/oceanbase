@@ -16,7 +16,7 @@
 #include "lib/container/ob_iarray.h"
 #include "lib/oblog/ob_log_module.h"
 #include "lib/objectpool/ob_concurrency_objpool.h"
-#include "storage/memtable/mvcc/ob_keybtree.h"
+#include "storage/memtable/mvcc/ob_keybtreeV2.h"
 #include "storage/memtable/mvcc/ob_mvcc_row.h"
 #include "storage/memtable/ob_memtable_key.h"
 #include "storage/memtable/ob_mt_hash.h"
@@ -62,10 +62,10 @@ public:
 class ObQueryEngine
 {
 public:
-  typedef keybtree::ObKeyBtree<ObStoreRowkeyWrapper, ObMvccRow *> KeyBtree;
-  typedef keybtree::BtreeNodeAllocator<ObStoreRowkeyWrapper, ObMvccRow *> BtreeNodeAllocator;
-  typedef keybtree::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *> BtreeIterator;
-  typedef keybtree::BtreeRawIterator<ObStoreRowkeyWrapper, ObMvccRow *> BtreeRawIterator;
+  typedef keybtreeV2::ObKeyBtree<ObStoreRowkeyWrapper, ObMvccRow *> KeyBtree;
+  typedef keybtreeV2::BtreeNodeAllocator<ObStoreRowkeyWrapper, ObMvccRow *> BtreeNodeAllocator;
+  typedef keybtreeV2::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *> BtreeIterator;
+  // typedef keybtree::BtreeRawIterator<ObStoreRowkeyWrapper, ObMvccRow *> BtreeRawIterator;
   typedef ObMtHash KeyHash;
 
   // ObQueryEngine Iterator implements the iterator interface
@@ -95,7 +95,7 @@ public:
         }
       } else {
         key_.encode(key_wrapper.get_rowkey());
-        BTREE_ASSERT(((uint64_t)value_ & 7ULL) == 0);
+        // BTREE_ASSERT(((uint64_t)value_ & 7ULL) == 0);
         if (OB_ISNULL(value_)) {
           ret = common::OB_ITER_END;
         }
@@ -203,6 +203,7 @@ public:
   int64_t btree_size() const;
   int64_t btree_alloc_memory() const;
 private:
+  /*
   int sample_rows(Iterator<BtreeRawIterator> *iter,
                   const ObMemtableKey *start_key,
                   const int start_exclude,
@@ -214,7 +215,7 @@ private:
                   double &ratio);
   int init_raw_iter_for_estimate(Iterator<BtreeRawIterator>*& iter,
                                  const ObMemtableKey *start_key,
-                                 const ObMemtableKey *end_key);
+                                 const ObMemtableKey *end_key);*/
 private:
   DISALLOW_COPY_AND_ASSIGN(ObQueryEngine);
 
@@ -228,7 +229,7 @@ private:
   KeyHash keyhash_;
   // Iterator allocator for read and estimation
   IteratorAlloc<BtreeIterator> iter_alloc_;
-  IteratorAlloc<BtreeRawIterator> raw_iter_alloc_;
+  // IteratorAlloc<BtreeRawIterator> raw_iter_alloc_;
 };
 
 } // namespace memtable

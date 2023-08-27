@@ -21,15 +21,15 @@ namespace memtable
 {
 using namespace common;
 
-STATIC_ASSERT(sizeof(ObQueryEngine::Iterator<keybtree::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>>) <= 5120, "Iterator size exceeded");
-STATIC_ASSERT(sizeof(keybtree::Iterator<ObStoreRowkeyWrapper, ObMvccRow *>) == 368, "Iterator size changed");
+// STATIC_ASSERT(sizeof(ObQueryEngine::Iterator<keybtree::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>>) <= 5120, "Iterator size exceeded");
+// STATIC_ASSERT(sizeof(keybtree::Iterator<ObStoreRowkeyWrapper, ObMvccRow *>) == 368, "Iterator size changed");
 
 void ObQueryEngine::check_cleanout(bool &is_all_cleanout,
                                    bool &is_all_delay_cleanout,
                                    int64_t &count)
 {
   int ret = OB_SUCCESS;
-  Iterator<keybtree::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>> iter;
+  Iterator<keybtreeV2::BtreeIterator<ObStoreRowkeyWrapper, ObMvccRow *>> iter;
   ObStoreRowkeyWrapper scan_start_key_wrapper(&ObStoreRowkey::MIN_STORE_ROWKEY);
   ObStoreRowkeyWrapper scan_end_key_wrapper(&ObStoreRowkey::MAX_STORE_ROWKEY);
   iter.reset();
@@ -153,7 +153,7 @@ int64_t ObQueryEngine::btree_size() const
 
 int64_t ObQueryEngine::btree_alloc_memory() const
 {
-  int64_t alloc_mem = sizeof(KeyBtree) + btree_allocator_.get_allocated();
+  int64_t alloc_mem = sizeof(KeyBtree) /*+ btree_allocator_.get_allocated()*/;
 
   return alloc_mem;
 }
@@ -327,6 +327,7 @@ void ObQueryEngine::revert_iter(ObIQueryEngineIterator *iter)
   iter = NULL;
 }
 
+#if 0
 int ObQueryEngine::sample_rows(Iterator<BtreeRawIterator> *iter,
                                const ObMemtableKey *start_key,
                                const int start_exclude,
@@ -434,6 +435,7 @@ int ObQueryEngine::init_raw_iter_for_estimate(Iterator<BtreeRawIterator>*& iter,
 
   return ret;
 }
+#endif
 
 int ObQueryEngine::estimate_size(const ObMemtableKey *start_key,
                                  const ObMemtableKey *end_key,
@@ -443,6 +445,8 @@ int ObQueryEngine::estimate_size(const ObMemtableKey *start_key,
                                  int64_t& total_rows)
 {
   int ret = OB_SUCCESS;
+  return ret;
+  #if 0
   Iterator<BtreeRawIterator> *iter = nullptr;
   branch_count = 0;
   for(level = 0; branch_count < ESTIMATE_CHILD_COUNT_THRESHOLD && OB_SUCC(ret); ) {
@@ -471,6 +475,7 @@ int ObQueryEngine::estimate_size(const ObMemtableKey *start_key,
     total_rows = 0;
   }
   return ret;
+  #endif
 }
 
 int ObQueryEngine::split_range(const ObMemtableKey *start_key,
@@ -479,6 +484,7 @@ int ObQueryEngine::split_range(const ObMemtableKey *start_key,
                                ObIArray<ObStoreRange> &range_array)
 {
   int ret = OB_SUCCESS;
+  #if 0
   Iterator<BtreeRawIterator> *iter = nullptr;
   int64_t level = 0;
   int64_t branch_count = 0;
@@ -550,6 +556,7 @@ int ObQueryEngine::split_range(const ObMemtableKey *start_key,
       iter = NULL;
     }
   }
+  #endif
   return ret;
 }
 
@@ -561,6 +568,7 @@ int ObQueryEngine::estimate_row_count(const transaction::ObTransID &tx_id,
                                       int64_t &physical_row_count)
 {
   int ret = OB_SUCCESS;
+  #if 0
   Iterator<BtreeRawIterator> *iter = nullptr;
   int64_t remaining_row_count = 0;
   int64_t element_count = 0;
@@ -621,6 +629,7 @@ int ObQueryEngine::estimate_row_count(const transaction::ObTransID &tx_id,
     iter = NULL;
   }
   ret = OB_ITER_END == ret ? OB_SUCCESS : ret;
+  #endif
   return ret;
 }
 

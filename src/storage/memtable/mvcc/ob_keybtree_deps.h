@@ -265,6 +265,13 @@ public:
     }
     set_key_value(pos, key, val);
   }
+  OB_INLINE void prefetch()
+  {
+    constexpr int cache_line_cnt = (sizeof(*this) - 1) / 64 + 1;
+    for (int i = 0; i < cache_line_cnt; i++) {
+      __builtin_prefetch((const char *)this + i * 64, 0, 3);
+    }
+  }
 protected:
   OB_INLINE int binary_search_upper_bound(CompHelper &nh, BtreeKey key, bool &is_equal, int &pos, MultibitSet *index = nullptr)
   {
@@ -284,6 +291,8 @@ protected:
     is_equal = false;
     while (OB_SUCC(ret) && start < end && !is_equal) {
       int mid = start + (end - start) / 2;
+      __builtin_prefetch(get_key(start + (mid - start) / 2, index).get_ptr(), 0, 3);
+      __builtin_prefetch(get_key(start + (end - mid - 1) / 2, index).get_ptr(), 0, 3);
       int cmp_ret = 0;
       if (OB_FAIL(nh.compare(key, get_key(mid, index), cmp_ret))) {
         OB_LOG(ERROR, "failed to compare", K(key), K(get_key(mid, index)));

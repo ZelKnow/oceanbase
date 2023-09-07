@@ -430,6 +430,7 @@ int ScanHandle<BtreeKey, BtreeVal>::find_path(BtreeNode *root, BtreeKey key, int
   index->reset();
   version_ = version;
   while (OB_NOT_NULL(root) && OB_SUCCESS == ret) {
+    root->prefetch();
     if (!may_exist || is_found) {
       pos = 0;
     } else if (OB_FAIL(root->find_pos(this->get_comp(), key, is_found, pos, index))) {
@@ -473,6 +474,7 @@ int ScanHandle<BtreeKey, BtreeVal>::scan_forward(const int64_t level) {
         break;
       } else {
         BtreeNode* child = (BtreeNode*)node->get_val(pos);
+        child->prefetch();
         if (child->is_leaf()) {
           index->load(child->get_index());
         }
@@ -503,6 +505,7 @@ int ScanHandle<BtreeKey, BtreeVal>::scan_backward(const int64_t level)
         break;
       } else {
         BtreeNode* child = (BtreeNode*)node->get_val(pos);
+        child->prefetch();
         if (child->is_leaf()) {
           index->load(child->get_index());
         }
@@ -531,6 +534,7 @@ int ScanHandle<BtreeKey, BtreeVal>::scan_forward(bool skip_inactive, int64_t* sk
         break;
       } else {
         BtreeNode* child = (BtreeNode*)node->get_val(pos);
+        child->prefetch();
         if (child->is_leaf()) {
           index->load(child->get_index());
         }
@@ -560,6 +564,7 @@ int ScanHandle<BtreeKey, BtreeVal>::scan_backward(bool skip_inactive, int64_t* s
         break;
       } else {
         BtreeNode* child = (BtreeNode*)node->get_val(pos);
+        child->prefetch();
         if (child->is_leaf()) {
           index->load(child->get_index());
         }
